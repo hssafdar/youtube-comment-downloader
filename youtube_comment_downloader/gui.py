@@ -359,6 +359,7 @@ class YouTubeCommentDownloaderGUI:
         
         self.download_thread = None
         self.is_downloading = False
+        self.cancel_requested = False
         
         # Initialize config and database
         self.config = Config()
@@ -466,8 +467,11 @@ class YouTubeCommentDownloaderGUI:
         self.download_button = ttk.Button(button_frame, text="Download", command=self._start_download)
         self.download_button.pack(side=tk.LEFT, padx=5)
         
-        self.cancel_button = ttk.Button(button_frame, text="Close", command=self._close_window)
-        self.cancel_button.pack(side=tk.LEFT, padx=5)
+        self.stop_button = ttk.Button(button_frame, text="Cancel", command=self._cancel_download, state=tk.DISABLED)
+        self.stop_button.pack(side=tk.LEFT, padx=5)
+        
+        self.close_button = ttk.Button(button_frame, text="Close", command=self._close_window)
+        self.close_button.pack(side=tk.LEFT, padx=5)
         row += 1
         
         # Status area
@@ -717,8 +721,12 @@ class YouTubeCommentDownloaderGUI:
         if not self._validate_inputs():
             return
         
-        # Disable download button
+        # Reset cancel flag
+        self.cancel_requested = False
+        
+        # Disable download button, enable cancel button
         self.download_button.config(state=tk.DISABLED)
+        self.stop_button.config(state=tk.NORMAL)
         self.is_downloading = True
         
         # Clear status
@@ -728,6 +736,16 @@ class YouTubeCommentDownloaderGUI:
         # Start download thread
         self.download_thread = threading.Thread(target=self._download_comments, daemon=True)
         self.download_thread.start()
+    
+    def _cancel_download(self):
+        """Cancel the current download"""
+        if not self.is_downloading:
+            return
+        
+        self.cancel_requested = True
+        self._log_status("")
+        self._log_status("Cancelling download...")
+        self.stop_button.config(state=tk.DISABLED)
     
     def _download_comments(self):
         """Download comments (runs in background thread)"""
@@ -867,6 +885,11 @@ class YouTubeCommentDownloaderGUI:
             
             self._log_status("Downloading comments...")
             for comment in generator:
+                # Check for cancellation
+                if self.cancel_requested:
+                    self._log_status("Download cancelled by user")
+                    return
+                
                 all_comments.append(comment)
                 count += 1
                 if limit and count >= limit:
@@ -883,6 +906,11 @@ class YouTubeCommentDownloaderGUI:
             
             if count > 0:
                 self.root.after(0, self._log_status, f"Downloaded {count:,} comment(s)...")
+            
+            # Check for cancellation after download
+            if self.cancel_requested:
+                self._log_status("Download cancelled by user")
+                return
             
             # Apply filter if specified
             filtered_comments = all_comments
@@ -901,6 +929,11 @@ class YouTubeCommentDownloaderGUI:
                 self.root.after(0, messagebox.showwarning, "No Comments", "No comments were found")
                 return
             
+            # Check for cancellation before saving
+            if self.cancel_requested:
+                self._log_status("Download cancelled by user")
+                return
+            
             # Create export path using file_utils
             output_path, output_folder = create_export_path(
                 base_folder=export_folder,
@@ -916,10 +949,20 @@ class YouTubeCommentDownloaderGUI:
             
             # If post has images, download them
             if is_post and metadata.get('images'):
+                # Check for cancellation before downloading images
+                if self.cancel_requested:
+                    self._log_status("Download cancelled by user")
+                    return
+                
                 self._log_status("Downloading post images...")
                 image_paths = downloader.download_post_images(metadata['images'], output_folder)
                 self._log_status(f"Downloaded {len(image_paths)} image(s)")
                 metadata['local_image_paths'] = image_paths
+            
+            # Check for cancellation before writing files
+            if self.cancel_requested:
+                self._log_status("Download cancelled by user")
+                return
             
             # Write output based on format
             if export_format == "Dark HTML":
@@ -981,10 +1024,12 @@ class YouTubeCommentDownloaderGUI:
             self.root.after(0, messagebox.showerror, "Download Error", error_msg)
         
         finally:
-            # Re-enable download button and reset progress
+            # Re-enable download button and disable cancel button
             self.root.after(0, self.download_button.config, {"state": tk.NORMAL})
+            self.root.after(0, self.stop_button.config, {"state": tk.DISABLED})
             self.root.after(0, self.progress_var.set, 0)
             self.is_downloading = False
+            self.cancel_requested = False
     
     def _close_window(self):
         """Close the window"""
