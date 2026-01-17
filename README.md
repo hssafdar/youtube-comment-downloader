@@ -30,8 +30,6 @@ pip install pyobjc-framework-Cocoa
 pip install -r requirements-optional.txt
 ```
 
-**Note:** Pillow is now a required dependency (installed automatically) for profile picture display in the GUI.
-
 ### Usage as command-line interface
 ```
 $ youtube-comment-downloader --help
@@ -82,7 +80,7 @@ youtube-comment-downloader-gui
 The GUI provides an easy-to-use interface with the following features:
 
 #### Core Features
-- Input fields for YouTube URL, video ID, or **community post URL**
+- Input fields for YouTube URL or video ID
 - **Default limit of 1,000 comments** (can be changed or cleared for unlimited)
 - Sort options (Popular or Recent)
 - Optional language setting
@@ -122,32 +120,39 @@ Choose from three export formats:
   - **Saved Users** - Filter by users you've previously saved to the database
   - **More...** - Opens the User Database Manager
 - **User Database Manager** - Enhanced dialog with improved UX:
-  - View all saved users with **circular profile pictures** (48x48) and channel information
-  - **Larger user entries** with display name and @handle
+  - View all saved users with display name and @handle
+  - **Larger, clearer user entries** (12pt bold display names)
   - **Folder button** (📁) next to each user - opens their folder in file explorer
     - Greyed out if no folder exists yet
     - Enabled when you've downloaded content from that user
+  - **Download Posts button** - Download all posts from a user's community tab
+    - Downloads all posts from the selected user's community tab
+    - Posts are saved to `[Export]/[Username]/posts/` folder
+    - Images are saved to `posts/assets/` subfolder
+    - No comments are downloaded (community posts don't support reliable comment downloads)
+  - **Right-click context menu** - Right-click on any user to access:
+    - **Open Channel** - Opens the user's YouTube channel in your default browser
   - **Add User by URL** - Add any YouTube channel:
     - Click "Add User..." button
     - Enter a YouTube channel URL (supports `@username`, `/channel/UC...`, `/c/name` formats)
-    - Automatically fetches channel name, ID, and profile picture
+    - Automatically fetches channel name and ID
     - Channel is added to your database for future filtering
-  - Automatically saves video/post authors when downloading their content
+  - Automatically saves video authors when downloading their content
   - Select users for filtering in future downloads
   - Delete users from the database
   - Users persist between sessions
 - When filtering, parent comments are automatically included when the filtered user replied to them (for conversation context)
 
-#### YouTube Community Posts Support
-- **Download comments from community posts** in addition to videos
-- Simply paste a post URL: `https://www.youtube.com/post/UgkxKAIe...`
+#### YouTube Community Posts
+- **Download posts from a user's community tab** (not individual post URLs)
+- Use the "Download Posts" button in the User Database Manager
 - Features:
+  - Downloads all posts from a creator's community tab
   - Extracts post content (text)
   - Downloads attached images to `posts/assets/` folder
-  - Downloads all comments on the post
-  - Displays post content at the top of HTML/TXT/JSON exports
-  - Images are embedded in HTML exports
+  - Generates individual HTML files for each post (no comments)
 - Posts are saved to a separate `posts/` folder (see folder structure below)
+- **Note:** Community post URLs are no longer supported in the main URL field. Use the "Download Posts" button instead.
 
 #### Automatic Folder Organization
 - Select a base export folder once (remembered between sessions)
@@ -162,9 +167,7 @@ Choose from three export formats:
   │   │       ├── [Video Title] - comments.txt
   │   │       └── [Video Title] - comments - filtered.txt
   │   └── posts/
-  │       ├── [Post Title] - comments.html
-  │       ├── Raw/
-  │       │   └── [Post Title] - comments.txt
+  │       ├── 2026-01-17 - Post Title.html       (post content, no comments)
   │       └── assets/
   │           ├── post_image_1.jpg
   │           └── post_image_2.png
@@ -172,7 +175,7 @@ Choose from three export formats:
       └── ...
   ```
 - Filenames are automatically sanitized for compatibility
-- `Raw/` subfolder is now inside `videos/` or `posts/` folders (created when "Include Raw TXT" is enabled)
+- `Raw/` subfolder is inside `videos/` folders only (created when "Include Raw TXT" is enabled)
 - `assets/` subfolder stores images from community posts
 - After download completes, the export folder opens automatically
 
