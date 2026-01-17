@@ -6,6 +6,7 @@ Tkinter GUI for YouTube Comment Downloader
 import io
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -44,6 +45,10 @@ class YouTubeCommentDownloaderGUI:
         self.download_thread = None
         self.is_downloading = False
         
+        # URL validation
+        self.url_validation_timer = None
+        self.url_validation_thread = None
+        
         self._create_widgets()
     
     def _create_widgets(self):
@@ -63,6 +68,12 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="YouTube URL or ID:").grid(row=row, column=0, sticky=tk.W, pady=5)
         self.url_entry = ttk.Entry(main_frame, width=50)
         self.url_entry.grid(row=row, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        self.url_entry.bind('<KeyRelease>', self._on_url_changed)
+        row += 1
+        
+        # URL validation status
+        self.url_status_label = ttk.Label(main_frame, text="", foreground="gray")
+        self.url_status_label.grid(row=row, column=1, columnspan=2, sticky=tk.W, pady=(0, 5))
         row += 1
         
         # Sort
@@ -191,6 +202,115 @@ class YouTubeCommentDownloaderGUI:
                     new_output = current_output[:-5] + '.json'
                     self.output_entry.delete(0, tk.END)
                     self.output_entry.insert(0, new_output)
+    
+    def _extract_video_id(self, url_or_id):
+        """
+        Extract YouTube video ID from URL or return the ID itself
+        
+        Args:
+            url_or_id: YouTube URL or video ID
+            
+        Returns:
+            Video ID if valid, None otherwise
+        """
+        url_or_id = url_or_id.strip()
+        
+        # Try to extract from various YouTube URL formats first
+        patterns = [
+            r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})',
+            r'youtube\.com\/.*[?&]v=([a-zA-Z0-9_-]{11})',
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, url_or_id)
+            if match:
+                return match.group(1)
+        
+        # If it looks like just an ID (exactly 11 characters, alphanumeric with _ or -), return it
+        if re.match(r'^[a-zA-Z0-9_-]{11}$', url_or_id):
+            return url_or_id
+        
+        return None
+    
+    def _on_url_changed(self, event=None):
+        """Handle URL entry text change with debouncing"""
+        # Cancel any pending validation
+        if self.url_validation_timer:
+            self.root.after_cancel(self.url_validation_timer)
+        
+        # Schedule new validation after 500ms
+        self.url_validation_timer = self.root.after(500, self._validate_url)
+    
+    def _validate_url(self):
+        """Validate the URL and check for comments (runs after debounce)"""
+        url_or_id = self.url_entry.get().strip()
+        
+        if not url_or_id:
+            self.url_status_label.config(text="", foreground="gray")
+            return
+        
+        # Show checking status
+        self.url_status_label.config(text="⏳ Checking...", foreground="gray")
+        
+        # Run validation in background thread
+        if self.url_validation_thread and self.url_validation_thread.is_alive():
+            # Skip if already validating
+            return
+        
+        self.url_validation_thread = threading.Thread(
+            target=self._validate_url_background,
+            args=(url_or_id,),
+            daemon=True
+        )
+        self.url_validation_thread.start()
+    
+    def _validate_url_background(self, url_or_id):
+        """Validate URL in background thread"""
+        try:
+            # Extract video ID
+            video_id = self._extract_video_id(url_or_id)
+            
+            if not video_id:
+                self.root.after(0, self.url_status_label.config, 
+                              {"text": "✗ Invalid YouTube URL", "foreground": "red"})
+                return
+            
+            # Try to fetch the page to verify it's valid
+            downloader = YoutubeCommentDownloader()
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            try:
+                response = downloader.session.get(url, timeout=10)
+                if response.status_code != 200:
+                    self.root.after(0, self.url_status_label.config,
+                                  {"text": "✗ Video not found", "foreground": "red"})
+                    return
+                
+                # Check if comments are available by looking for comment section in HTML
+                html_content = response.text
+                if 'commentsDisabled' in html_content or '"commentCount":0' in html_content:
+                    self.root.after(0, self.url_status_label.config,
+                                  {"text": "✓ Valid URL (comments may be disabled)", "foreground": "orange"})
+                else:
+                    # Try to extract comment count
+                    comment_count_match = re.search(r'"commentCount":"(\d+)"', html_content)
+                    if comment_count_match:
+                        count = int(comment_count_match.group(1))
+                        count_str = f"{count:,}"
+                        self.root.after(0, self.url_status_label.config,
+                                      {"text": f"✓ Valid - ~{count_str} comments", "foreground": "green"})
+                    else:
+                        self.root.after(0, self.url_status_label.config,
+                                      {"text": "✓ Valid YouTube URL", "foreground": "green"})
+            except Exception as e:
+                # Network error or timeout
+                self.root.after(0, self.url_status_label.config,
+                              {"text": "✓ Valid format (couldn't verify)", "foreground": "orange"})
+        
+        except Exception as e:
+            # Any other error
+            self.root.after(0, self.url_status_label.config,
+                          {"text": "✗ Invalid URL", "foreground": "red"})
     
     def _log_status(self, message):
         """Add message to status text area"""
