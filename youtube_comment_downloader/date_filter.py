@@ -49,13 +49,13 @@ class DateFilter:
             # Parse relative time like "2 weeks ago"
             parsed_date = dateparser.parse(time_text)
             
+            # Only include comments with parseable dates when filtering is active
             if parsed_date:
                 if after_date and parsed_date < after_date:
                     continue
                 if before_date and parsed_date > before_date:
                     continue
-            
-            filtered.append(comment)
+                filtered.append(comment)
         
         return filtered
     
