@@ -18,6 +18,69 @@ YOUTUBE_POST_URL = 'https://www.youtube.com/post/{post_id}'
 class YoutubePostDownloader(YoutubeCommentDownloader):
     """Extends YoutubeCommentDownloader to support community posts"""
     
+    def get_channel_posts(self, channel_id):
+        """
+        Fetch all posts from a channel's community tab
+        
+        Args:
+            channel_id: YouTube channel ID (UC...)
+            
+        Returns:
+            List of post dictionaries with content, images, date, post_id
+        """
+        community_url = f"https://www.youtube.com/channel/{channel_id}/community"
+        
+        try:
+            response = self.session.get(community_url, timeout=30)
+            
+            # Handle consent if needed
+            if 'consent' in str(response.url):
+                params = dict(re.findall(YT_HIDDEN_INPUT_RE, response.text))
+                params.update({'continue': community_url, 'set_eom': False, 'set_ytc': True, 'set_apyt': True})
+                response = self.session.post(YOUTUBE_CONSENT_URL, params=params)
+            
+            html = response.text
+            data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default='{}'))
+            
+            posts = []
+            
+            # Find all backstagePostRenderer elements
+            for post_renderer in self.search_dict(data, 'backstagePostRenderer'):
+                post = {
+                    'post_id': post_renderer.get('postId', ''),
+                    'content': '',
+                    'images': [],
+                    'published_time': '',
+                }
+                
+                # Extract content
+                content_text = post_renderer.get('contentText', {})
+                if 'runs' in content_text:
+                    post['content'] = ''.join([r.get('text', '') for r in content_text['runs']])
+                
+                # Extract images
+                attachment = post_renderer.get('backstageAttachment', {})
+                if 'backstageImageRenderer' in attachment:
+                    thumbs = attachment['backstageImageRenderer'].get('image', {}).get('thumbnails', [])
+                    if thumbs:
+                        # Get highest quality image
+                        post['images'].append(thumbs[-1].get('url', ''))
+                
+                # Extract published time
+                published = post_renderer.get('publishedTimeText', {})
+                if isinstance(published, dict):
+                    runs = published.get('runs', [])
+                    if runs:
+                        post['published_time'] = runs[0].get('text', '')
+                
+                if post['post_id']:  # Only add if we have a post ID
+                    posts.append(post)
+            
+            return posts
+            
+        except (json.JSONDecodeError, requests.RequestException) as e:
+            return []
+    
     def get_post_metadata(self, post_url):
         """
         Extract post metadata including title, author info, images, and comment count

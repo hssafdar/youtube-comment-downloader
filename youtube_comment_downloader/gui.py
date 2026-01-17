@@ -19,14 +19,6 @@ from .txt_export import generate_txt_output
 from .pdf_export import generate_pdf_output
 from .user_database import UserDatabase
 
-try:
-    from PIL import Image, ImageTk, ImageDraw
-    import io
-    import requests as img_requests
-    PIL_AVAILABLE = True
-except ImportError:
-    PIL_AVAILABLE = False
-
 # Constants
 DEFAULT_COMMENT_LIMIT = 1000  # Default limit for comment downloads
 
@@ -34,11 +26,11 @@ DEFAULT_COMMENT_LIMIT = 1000  # Default limit for comment downloads
 class UserDatabaseDialog:
     """Dialog for managing users in the database"""
     
-    def __init__(self, parent, user_db, export_folder=None):
+    def __init__(self, parent, user_db, export_folder=None, main_gui=None):
         self.user_db = user_db
         self.export_folder = export_folder
+        self.main_gui = main_gui  # Reference to main GUI for checking download state
         self.result = None
-        self.photo_cache = {}
         self.user_frames = []
         
         self.dialog = tk.Toplevel(parent)
@@ -99,47 +91,6 @@ class UserDatabaseDialog:
         elif event.num == 4 or event.delta > 0:
             self.canvas.yview_scroll(-1, "units")
     
-    def _fetch_and_cache_image(self, url):
-        """
-        Fetch and cache a profile picture, resize to 48x48 circular
-        
-        Args:
-            url: URL to profile picture
-        
-        Returns:
-            PhotoImage object or None
-        """
-        if not PIL_AVAILABLE or not url:
-            return None
-        
-        if url in self.photo_cache:
-            return self.photo_cache[url]
-        
-        try:
-            response = img_requests.get(url, timeout=5)
-            response.raise_for_status()
-            
-            # Open and resize image
-            img = Image.open(io.BytesIO(response.content))
-            img = img.resize((48, 48), Image.LANCZOS)
-            
-            # Create circular mask
-            mask = Image.new('L', (48, 48), 0)
-            draw = ImageDraw.Draw(mask)
-            draw.ellipse((0, 0, 48, 48), fill=255)
-            
-            # Apply mask
-            output = Image.new('RGBA', (48, 48), (0, 0, 0, 0))
-            output.paste(img, (0, 0))
-            output.putalpha(mask)
-            
-            # Convert to PhotoImage
-            photo = ImageTk.PhotoImage(output)
-            self.photo_cache[url] = photo
-            return photo
-        except Exception:
-            return None
-    
     def _refresh_list(self):
         """Refresh the user list with profile pictures and folder buttons"""
         # Clear existing frames
@@ -161,7 +112,7 @@ class UserDatabaseDialog:
     
     def _create_user_entry(self, user, idx):
         """
-        Create a user entry with profile picture and folder button
+        Create a simplified user entry with bigger display name and Download Posts button
         
         Args:
             user: User dictionary
@@ -176,33 +127,16 @@ class UserDatabaseDialog:
         inner_frame = ttk.Frame(user_frame, padding="10")
         inner_frame.pack(fill=tk.X)
         
-        # Profile picture (48x48)
-        pic_label = tk.Label(inner_frame, width=48, height=48, bg='#3f3f3f')
-        pic_label.pack(side=tk.LEFT, padx=(0, 12))
-        
-        # Try to load profile picture
-        profile_pic_url = user.get('profile_pic_url')
-        if profile_pic_url and PIL_AVAILABLE:
-            photo = self._fetch_and_cache_image(profile_pic_url)
-            if photo:
-                pic_label.config(image=photo, bg='')
-                pic_label.image = photo  # Keep a reference
-            else:
-                # Fallback to text
-                pic_label.config(text="👤", font=('TkDefaultFont', 24), fg='#aaaaaa')
-        else:
-            # No PIL or no URL - show emoji
-            pic_label.config(text="👤", font=('TkDefaultFont', 24), fg='#aaaaaa')
-        
-        # User info (display name and handle)
+        # User info (display name and handle) - no profile picture
         info_frame = ttk.Frame(inner_frame)
         info_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
         display_name = user.get('display_name', 'Unknown')
         username = user.get('username', display_name)
         
+        # Bigger display name (12pt bold)
         name_label = ttk.Label(info_frame, text=display_name, 
-                              font=('TkDefaultFont', 11, 'bold'))
+                              font=('TkDefaultFont', 12, 'bold'))
         name_label.pack(anchor=tk.W)
         
         handle_label = ttk.Label(info_frame, text=f"@{username}", 
@@ -225,6 +159,15 @@ class UserDatabaseDialog:
         if not folder_exists:
             folder_btn.config(state=tk.DISABLED)
         
+        # Download Posts button
+        download_posts_btn = ttk.Button(buttons_frame, text="Download Posts", width=14,
+                                       command=lambda u=user: self._download_user_posts(u))
+        download_posts_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Disable if main GUI is downloading
+        if self.main_gui and self.main_gui.is_downloading:
+            download_posts_btn.config(state=tk.DISABLED)
+        
         # Select button
         select_btn = ttk.Button(buttons_frame, text="Select", width=8,
                                command=lambda u=user: self._select_user_by_data(u))
@@ -234,6 +177,12 @@ class UserDatabaseDialog:
         delete_btn = ttk.Button(buttons_frame, text="Delete", width=8,
                                command=lambda u=user: self._delete_user_by_data(u))
         delete_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Bind right-click to show context menu
+        for widget in [user_frame, inner_frame, info_frame, name_label, handle_label]:
+            widget.bind("<Button-3>", lambda e, u=user: self._show_context_menu(e, u))
+            # Also bind Button-2 for macOS
+            widget.bind("<Button-2>", lambda e, u=user: self._show_context_menu(e, u))
     
     def _open_user_folder(self, user):
         """Open the user's folder in file explorer"""
@@ -246,6 +195,192 @@ class UserDatabaseDialog:
         
         if os.path.isdir(user_folder):
             open_folder(user_folder)
+    
+    def _show_context_menu(self, event, user):
+        """Show right-click context menu"""
+        menu = tk.Menu(self.dialog, tearoff=0)
+        menu.add_command(label="Open Channel", command=lambda: self._open_channel_url(user))
+        menu.tk_popup(event.x_root, event.y_root)
+    
+    def _open_channel_url(self, user):
+        """Open the user's YouTube channel URL in browser"""
+        import webbrowser
+        channel_url = user.get('channel_url', f"https://www.youtube.com/channel/{user['user_id']}")
+        webbrowser.open(channel_url)
+    
+    def _download_user_posts(self, user):
+        """Download all posts from a user's community tab"""
+        if self.main_gui and self.main_gui.is_downloading:
+            messagebox.showwarning("Download in Progress", 
+                                  "Please wait for the current download to complete.",
+                                  parent=self.dialog)
+            return
+        
+        if not self.export_folder:
+            messagebox.showerror("No Export Folder", 
+                               "Please set an export folder in the main window first.",
+                               parent=self.dialog)
+            return
+        
+        # Start download in background thread
+        import threading
+        thread = threading.Thread(target=self._download_posts_worker, args=(user,), daemon=True)
+        thread.start()
+    
+    def _download_posts_worker(self, user):
+        """Worker thread for downloading posts"""
+        try:
+            from .post_downloader import YoutubePostDownloader
+            from .file_utils import sanitize_filename
+            from datetime import datetime
+            
+            channel_id = user['user_id']
+            username = user.get('username', user.get('display_name', 'Unknown'))
+            
+            # Show progress dialog
+            self.dialog.after(0, lambda: messagebox.showinfo(
+                "Downloading Posts",
+                f"Downloading posts from {user['display_name']}...\n\nThis may take a moment.",
+                parent=self.dialog
+            ))
+            
+            # Create downloader
+            downloader = YoutubePostDownloader()
+            
+            # Fetch posts from community tab
+            posts = downloader.get_channel_posts(channel_id)
+            
+            if not posts:
+                self.dialog.after(0, lambda: messagebox.showinfo(
+                    "No Posts Found",
+                    f"No posts found for {user['display_name']}.",
+                    parent=self.dialog
+                ))
+                return
+            
+            # Create output folder structure
+            safe_username = sanitize_filename(username)
+            user_folder = os.path.join(self.export_folder, safe_username)
+            posts_folder = os.path.join(user_folder, 'posts')
+            assets_folder = os.path.join(posts_folder, 'assets')
+            os.makedirs(assets_folder, exist_ok=True)
+            
+            # Download each post
+            posts_saved = 0
+            for post in posts:
+                try:
+                    # Download images
+                    local_images = []
+                    for img_url in post.get('images', []):
+                        try:
+                            import requests
+                            from urllib.parse import urlparse
+                            
+                            # Validate URL
+                            parsed = urlparse(img_url)
+                            allowed_domains = ['ytimg.com', 'ggpht.com', 'googleusercontent.com', 'youtube.com']
+                            if not any(domain in parsed.netloc for domain in allowed_domains):
+                                continue
+                            
+                            response = requests.get(img_url, timeout=30)
+                            response.raise_for_status()
+                            
+                            # Determine extension
+                            ext = '.jpg'
+                            if 'content-type' in response.headers:
+                                content_type = response.headers['content-type']
+                                if 'png' in content_type:
+                                    ext = '.png'
+                                elif 'webp' in content_type:
+                                    ext = '.webp'
+                            
+                            img_filename = f"post_{post['post_id']}_{len(local_images)}{ext}"
+                            img_path = os.path.join(assets_folder, img_filename)
+                            
+                            with open(img_path, 'wb') as f:
+                                f.write(response.content)
+                            
+                            local_images.append(img_filename)
+                        except Exception:
+                            continue
+                    
+                    # Generate HTML for post
+                    post_content = post.get('content', 'No content')
+                    post_date = post.get('published_time', '')
+                    
+                    # Create filename with date
+                    try:
+                        # Try to parse relative date
+                        date_str = datetime.now().strftime('%Y-%m-%d')
+                    except Exception:
+                        date_str = datetime.now().strftime('%Y-%m-%d')
+                    
+                    # Truncate title
+                    title_preview = post_content[:50].replace('\n', ' ') if post_content else 'Post'
+                    safe_title = sanitize_filename(title_preview)
+                    post_filename = f"{date_str} - {safe_title}.html"
+                    post_path = os.path.join(posts_folder, post_filename)
+                    
+                    # Generate HTML
+                    html_content = self._generate_post_html(post, local_images, username)
+                    
+                    with open(post_path, 'w', encoding='utf-8') as f:
+                        f.write(html_content)
+                    
+                    posts_saved += 1
+                except Exception:
+                    continue
+            
+            # Show completion message
+            self.dialog.after(0, lambda: messagebox.showinfo(
+                "Download Complete",
+                f"Successfully downloaded {posts_saved} post(s) from {user['display_name']}.",
+                parent=self.dialog
+            ))
+            
+            # Open posts folder
+            from .file_utils import open_folder
+            self.dialog.after(0, lambda: open_folder(posts_folder))
+            
+        except Exception as e:
+            self.dialog.after(0, lambda: messagebox.showerror(
+                "Download Error",
+                f"Error downloading posts: {str(e)}",
+                parent=self.dialog
+            ))
+    
+    def _generate_post_html(self, post, local_images, channel_name):
+        """Generate HTML for a single post"""
+        import html as html_module
+        
+        content = html_module.escape(post.get('content', ''))
+        published = html_module.escape(post.get('published_time', ''))
+        
+        images_html = ''
+        for img_filename in local_images:
+            images_html += f'<img class="image" src="assets/{img_filename}" alt="Post image">\n'
+        
+        return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Post by {html_module.escape(channel_name)}</title>
+    <style>
+        body {{ background: #0f0f0f; color: #f1f1f1; font-family: Roboto, sans-serif; padding: 20px; }}
+        .post {{ max-width: 800px; margin: auto; background: #212121; padding: 20px; border-radius: 12px; }}
+        .content {{ white-space: pre-wrap; margin-bottom: 20px; line-height: 1.6; }}
+        .image {{ max-width: 100%; border-radius: 8px; margin: 10px 0; display: block; }}
+        .meta {{ color: #aaa; font-size: 12px; margin-bottom: 15px; }}
+    </style>
+</head>
+<body>
+    <div class="post">
+        <div class="meta">{published}</div>
+        <div class="content">{content}</div>
+        {images_html}
+    </div>
+</body>
+</html>"""
     
     def _select_user_by_data(self, user):
         """Select a user by data"""
@@ -527,7 +662,7 @@ class YouTubeCommentDownloaderGUI:
     def _open_user_manager(self):
         """Open the user database manager dialog"""
         export_folder = self.folder_entry.get().strip()
-        dialog = UserDatabaseDialog(self.root, self.user_db, export_folder)
+        dialog = UserDatabaseDialog(self.root, self.user_db, export_folder, main_gui=self)
         self.root.wait_window(dialog.dialog)
         
         # Refresh the dropdown
@@ -721,6 +856,17 @@ class YouTubeCommentDownloaderGUI:
         if not self._validate_inputs():
             return
         
+        # Check if user entered a post URL
+        url_or_id = self.url_entry.get().strip()
+        if self._is_post_url(url_or_id):
+            messagebox.showerror(
+                "Post URLs Not Supported",
+                "Post URLs are not supported for comment downloads.\n\n"
+                "To download a creator's posts, use the 'Download Posts' button "
+                "in the User Database Manager (Manage... button)."
+            )
+            return
+        
         # Reset cancel flag
         self.cancel_requested = False
         
@@ -776,31 +922,15 @@ class YouTubeCommentDownloaderGUI:
                 filter_user_id = user['user_id']
                 filter_user_name = user['display_name']
             
-            # Determine if input is a post or video
-            is_post = self._is_post_url(url_or_id)
+            # Handle video only (posts are no longer supported here)
+            video_id = self._extract_video_id(url_or_id)
+            if not video_id:
+                raise Exception("Invalid YouTube URL or video ID")
             
-            if is_post:
-                # Handle community post
-                post_id = self._extract_post_id(url_or_id)
-                if not post_id:
-                    raise Exception("Invalid YouTube post URL")
-                
-                full_url = f"https://www.youtube.com/post/{post_id}"
-                content_id = post_id
-                content_type = "post"
-                
-                self._log_status(f"Downloading YouTube comments for community post: {post_id}")
-            else:
-                # Handle video
-                video_id = self._extract_video_id(url_or_id)
-                if not video_id:
-                    raise Exception("Invalid YouTube URL or video ID")
-                
-                full_url = f"https://www.youtube.com/watch?v={video_id}"
-                content_id = video_id
-                content_type = "video"
-                
-                self._log_status(f"Downloading YouTube comments for video: {video_id}")
+            full_url = f"https://www.youtube.com/watch?v={video_id}"
+            content_id = video_id
+            
+            self._log_status(f"Downloading YouTube comments for video: {video_id}")
             
             self._log_status(f"Sort: {sort_display}")
             if language:
@@ -819,23 +949,15 @@ class YouTubeCommentDownloaderGUI:
             self._log_status(f"Export format: {export_format}")
             self._log_status("")
             
-            # Create appropriate downloader
-            if is_post:
-                from .post_downloader import YoutubePostDownloader
-                downloader = YoutubePostDownloader()
-                
-                # Get post metadata
-                self._log_status("Fetching post metadata...")
-                metadata = downloader.get_post_metadata(full_url)
-            else:
-                downloader = YoutubeCommentDownloader()
-                
-                # Get video metadata
-                self._log_status("Fetching video metadata...")
-                metadata = downloader.get_video_metadata(full_url)
+            # Create video downloader
+            downloader = YoutubeCommentDownloader()
+            
+            # Get video metadata
+            self._log_status("Fetching video metadata...")
+            metadata = downloader.get_video_metadata(full_url)
             
             if not metadata:
-                raise Exception(f"Could not extract {content_type} metadata")
+                raise Exception("Could not extract video metadata")
             
             content_title = metadata.get('title', f'Unknown {content_type.title()}')
             channel_name = metadata.get('channel_name', 'Unknown Creator')
@@ -869,11 +991,8 @@ class YouTubeCommentDownloaderGUI:
             
             self._log_status("")
             
-            # Get comment generator
-            if is_post:
-                generator = downloader.get_post_comments(content_id, sort_by, language)
-            else:
-                generator = downloader.get_comments(content_id, sort_by, language)
+            # Get comment generator (videos only now)
+            generator = downloader.get_comments(content_id, sort_by, language)
             
             # Download comments to list
             all_comments = []
@@ -935,50 +1054,35 @@ class YouTubeCommentDownloaderGUI:
                 self._log_status("Download cancelled by user")
                 return
             
-            # Create export path using file_utils
+            # Create export path using file_utils (video only)
             output_path, output_folder = create_export_path(
                 base_folder=export_folder,
                 creator_name=channel_name,
                 video_title=content_title,
                 export_format=file_extension,
                 is_filtered=is_filtered,
-                is_post=is_post
+                is_post=False
             )
             
             self._log_status("")
             self._log_status(f"Saving to: {output_path}")
-            
-            # If post has images, download them
-            if is_post and metadata.get('images'):
-                # Check for cancellation before downloading images
-                if self.cancel_requested:
-                    self._log_status("Download cancelled by user")
-                    return
-                
-                self._log_status("Downloading post images...")
-                image_paths = downloader.download_post_images(metadata['images'], output_folder)
-                self._log_status(f"Downloaded {len(image_paths)} image(s)")
-                metadata['local_image_paths'] = image_paths
             
             # Check for cancellation before writing files
             if self.cancel_requested:
                 self._log_status("Download cancelled by user")
                 return
             
-            # Write output based on format
+            # Write output based on format (videos only, no post metadata)
             if export_format == "Dark HTML":
                 filter_label = filter_user_name if is_filtered else None
-                post_metadata = metadata if is_post else None
-                generate_html_output(filtered_comments, output_path, filter_label, post_metadata)
+                generate_html_output(filtered_comments, output_path, filter_label, None)
             elif export_format == "JSON":
                 filter_label = filter_user_name if is_filtered else None
-                post_metadata = metadata if is_post else None
-                generate_json_output(filtered_comments, output_path, filter_label, post_metadata)
+                generate_json_output(filtered_comments, output_path, filter_label, None)
             elif export_format == "PDF":
                 try:
                     filter_label = filter_user_name if is_filtered else None
-                    post_metadata = metadata if is_post else None
-                    generate_pdf_output(filtered_comments, output_path, filter_label, post_metadata)
+                    generate_pdf_output(filtered_comments, output_path, filter_label, None)
                 except ImportError as e:
                     self.root.after(0, self._log_status, "")
                     self.root.after(0, self._log_status, f"PDF export error: {str(e)}")
@@ -988,8 +1092,7 @@ class YouTubeCommentDownloaderGUI:
             
             # If include_raw_txt is checked, also export to TXT in Raw folder
             if include_raw_txt:
-                # Raw folder should be inside the content folder (videos/ or posts/)
-                # output_folder is the videos/ or posts/ directory
+                # Raw folder should be inside the videos folder
                 raw_folder = os.path.join(output_folder, 'Raw')
                 os.makedirs(raw_folder, exist_ok=True)
                 
@@ -1000,8 +1103,7 @@ class YouTubeCommentDownloaderGUI:
                 
                 self._log_status(f"Also saving TXT to: {txt_path}")
                 filter_label = filter_user_name if is_filtered else None
-                post_metadata = metadata if is_post else None
-                generate_txt_output(filtered_comments, txt_path, filter_label, post_metadata)
+                generate_txt_output(filtered_comments, txt_path, filter_label, None)
             
             elapsed = time.time() - start_time
             self.root.after(0, self._log_status, "")
