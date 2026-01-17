@@ -64,7 +64,6 @@ class YoutubeCommentDownloader:
             
             html = response.text
             data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default='{}'))
-
             
             # Try to find channel ID in the video owner renderer
             owner_renderer = next(self.search_dict(data, 'videoOwnerRenderer'), None)
@@ -98,13 +97,13 @@ class YoutubeCommentDownloader:
             response = self.session.post(YOUTUBE_CONSENT_URL, params=params)
 
         html = response.text
-        ytcfg = json.loads(self.regex_search(html, YT_CFG_RE, default=''))
+        ytcfg = json.loads(self.regex_search(html, YT_CFG_RE, default='{}'))
         if not ytcfg:
             return  # Unable to extract configuration
         if language:
             ytcfg['INNERTUBE_CONTEXT']['client']['hl'] = language
 
-        data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default=''))
+        data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default='{}'))
 
         item_section = next(self.search_dict(data, 'itemSectionRenderer'), None)
         renderer = next(self.search_dict(item_section, 'continuationItemRenderer'), None) if item_section else None
