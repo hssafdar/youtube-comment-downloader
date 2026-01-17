@@ -3,5 +3,5 @@
 # For PDF export
 reportlab
 
-# For profile picture display in GUI
-Pillow
+# For Mac app name in dock (macOS only)
+pyobjc-framework-Cocoa

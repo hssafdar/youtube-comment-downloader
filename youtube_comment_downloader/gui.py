@@ -27,18 +27,23 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
+# Constants
+DEFAULT_COMMENT_LIMIT = 1000  # Default limit for comment downloads
+
 
 class UserDatabaseDialog:
     """Dialog for managing users in the database"""
     
-    def __init__(self, parent, user_db):
+    def __init__(self, parent, user_db, export_folder=None):
         self.user_db = user_db
+        self.export_folder = export_folder
         self.result = None
         self.photo_cache = {}
+        self.user_frames = []
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("User Database Manager")
-        self.dialog.geometry("700x500")
+        self.dialog.geometry("750x550")
         self.dialog.transient(parent)
         self.dialog.grab_set()
         
@@ -53,44 +58,207 @@ class UserDatabaseDialog:
         # Instructions
         ttk.Label(main_frame, text="Manage users for filtering:").pack(anchor=tk.W, pady=(0, 10))
         
-        # Listbox with scrollbar and larger items
-        list_frame = ttk.Frame(main_frame)
-        list_frame.pack(fill=tk.BOTH, expand=True)
+        # Create a canvas with scrollbar for user list
+        list_container = ttk.Frame(main_frame)
+        list_container.pack(fill=tk.BOTH, expand=True)
         
-        scrollbar = ttk.Scrollbar(list_frame)
+        canvas = tk.Canvas(list_container, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_container, orient=tk.VERTICAL, command=canvas.yview)
+        self.user_list_frame = ttk.Frame(canvas)
+        
+        self.user_list_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=self.user_list_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        # Use larger font for list items
-        self.user_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, 
-                                       font=('TkDefaultFont', 10), height=15)
-        self.user_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.user_listbox.yview)
+        # Store canvas reference for mouse wheel binding
+        self.canvas = canvas
         
-        self.user_listbox.bind('<Double-Button-1>', lambda e: self._select_user())
+        # Bind mouse wheel
+        canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        canvas.bind_all("<Button-4>", self._on_mousewheel)
+        canvas.bind_all("<Button-5>", self._on_mousewheel)
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=(10, 0))
         
         ttk.Button(button_frame, text="Add User...", command=self._add_user_dialog).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Select", command=self._select_user).pack(side=tk.LEFT, padx=5)
-        ttk.Button(button_frame, text="Delete", command=self._delete_user).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Close", command=self.dialog.destroy).pack(side=tk.LEFT, padx=5)
     
+    def _on_mousewheel(self, event):
+        """Handle mouse wheel scrolling"""
+        if event.num == 5 or event.delta < 0:
+            self.canvas.yview_scroll(1, "units")
+        elif event.num == 4 or event.delta > 0:
+            self.canvas.yview_scroll(-1, "units")
+    
+    def _fetch_and_cache_image(self, url):
+        """
+        Fetch and cache a profile picture, resize to 48x48 circular
+        
+        Args:
+            url: URL to profile picture
+        
+        Returns:
+            PhotoImage object or None
+        """
+        if not PIL_AVAILABLE or not url:
+            return None
+        
+        if url in self.photo_cache:
+            return self.photo_cache[url]
+        
+        try:
+            response = img_requests.get(url, timeout=5)
+            response.raise_for_status()
+            
+            # Open and resize image
+            img = Image.open(io.BytesIO(response.content))
+            img = img.resize((48, 48), Image.LANCZOS)
+            
+            # Create circular mask
+            mask = Image.new('L', (48, 48), 0)
+            draw = ImageDraw.Draw(mask)
+            draw.ellipse((0, 0, 48, 48), fill=255)
+            
+            # Apply mask
+            output = Image.new('RGBA', (48, 48), (0, 0, 0, 0))
+            output.paste(img, (0, 0))
+            output.putalpha(mask)
+            
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(output)
+            self.photo_cache[url] = photo
+            return photo
+        except Exception:
+            return None
+    
     def _refresh_list(self):
-        """Refresh the user list"""
-        self.user_listbox.delete(0, tk.END)
+        """Refresh the user list with profile pictures and folder buttons"""
+        # Clear existing frames
+        for frame in self.user_frames:
+            frame.destroy()
+        self.user_frames.clear()
+        
         users = self.user_db.get_all_users()
         self.users = users
         
         if not users:
-            self.user_listbox.insert(tk.END, "(No users in database)")
+            no_users_label = ttk.Label(self.user_list_frame, text="(No users in database)", 
+                                      font=('TkDefaultFont', 10))
+            no_users_label.pack(pady=20)
+            self.user_frames.append(no_users_label)
         else:
-            for user in users:
-                # Show profile picture icon and user info
-                profile_indicator = "👤"  # Default avatar emoji
-                display = f"  {profile_indicator}  {user['display_name']} (@{user['username']})"
-                self.user_listbox.insert(tk.END, display)
+            for idx, user in enumerate(users):
+                self._create_user_entry(user, idx)
+    
+    def _create_user_entry(self, user, idx):
+        """
+        Create a user entry with profile picture and folder button
+        
+        Args:
+            user: User dictionary
+            idx: Index in the list
+        """
+        # Create frame for this user with padding and border effect
+        user_frame = ttk.Frame(self.user_list_frame, relief=tk.RAISED, borderwidth=1)
+        user_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.user_frames.append(user_frame)
+        
+        # Create inner frame with padding
+        inner_frame = ttk.Frame(user_frame, padding="10")
+        inner_frame.pack(fill=tk.X)
+        
+        # Profile picture (48x48)
+        pic_label = tk.Label(inner_frame, width=48, height=48, bg='#3f3f3f')
+        pic_label.pack(side=tk.LEFT, padx=(0, 12))
+        
+        # Try to load profile picture
+        profile_pic_url = user.get('profile_pic_url')
+        if profile_pic_url and PIL_AVAILABLE:
+            photo = self._fetch_and_cache_image(profile_pic_url)
+            if photo:
+                pic_label.config(image=photo, bg='')
+                pic_label.image = photo  # Keep a reference
+            else:
+                # Fallback to text
+                pic_label.config(text="👤", font=('TkDefaultFont', 24), fg='#aaaaaa')
+        else:
+            # No PIL or no URL - show emoji
+            pic_label.config(text="👤", font=('TkDefaultFont', 24), fg='#aaaaaa')
+        
+        # User info (display name and handle)
+        info_frame = ttk.Frame(inner_frame)
+        info_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        display_name = user.get('display_name', 'Unknown')
+        username = user.get('username', display_name)
+        
+        name_label = ttk.Label(info_frame, text=display_name, 
+                              font=('TkDefaultFont', 11, 'bold'))
+        name_label.pack(anchor=tk.W)
+        
+        handle_label = ttk.Label(info_frame, text=f"@{username}", 
+                               font=('TkDefaultFont', 9), foreground='gray')
+        handle_label.pack(anchor=tk.W)
+        
+        # Buttons frame
+        buttons_frame = ttk.Frame(inner_frame)
+        buttons_frame.pack(side=tk.RIGHT, padx=(10, 0))
+        
+        # Folder button
+        folder_exists = False
+        if self.export_folder:
+            folder_exists = self.user_db.user_folder_exists(self.export_folder, username)
+        
+        folder_btn = ttk.Button(buttons_frame, text="📁", width=4,
+                               command=lambda u=user: self._open_user_folder(u))
+        folder_btn.pack(side=tk.LEFT, padx=2)
+        
+        if not folder_exists:
+            folder_btn.config(state=tk.DISABLED)
+        
+        # Select button
+        select_btn = ttk.Button(buttons_frame, text="Select", width=8,
+                               command=lambda u=user: self._select_user_by_data(u))
+        select_btn.pack(side=tk.LEFT, padx=2)
+        
+        # Delete button
+        delete_btn = ttk.Button(buttons_frame, text="Delete", width=8,
+                               command=lambda u=user: self._delete_user_by_data(u))
+        delete_btn.pack(side=tk.LEFT, padx=2)
+    
+    def _open_user_folder(self, user):
+        """Open the user's folder in file explorer"""
+        if not self.export_folder:
+            return
+        
+        from .file_utils import sanitize_filename, open_folder
+        username = user.get('username', user.get('display_name', ''))
+        user_folder = os.path.join(self.export_folder, sanitize_filename(username))
+        
+        if os.path.isdir(user_folder):
+            open_folder(user_folder)
+    
+    def _select_user_by_data(self, user):
+        """Select a user by data"""
+        self.result = user
+        self.dialog.destroy()
+    
+    def _delete_user_by_data(self, user):
+        """Delete a user by data"""
+        if messagebox.askyesno("Confirm Delete", 
+                              f"Delete user '{user['display_name']}'?",
+                              parent=self.dialog):
+            self.user_db.delete_user(user['user_id'])
+            self._refresh_list()
     
     def _add_user_dialog(self):
         """Show dialog to add user by URL"""
@@ -171,27 +339,7 @@ class UserDatabaseDialog:
         
         # Bind Enter key
         url_entry.bind('<Return>', lambda e: do_add())
-    
-    def _select_user(self):
-        """Select a user from the list"""
-        selection = self.user_listbox.curselection()
-        if selection and self.users:
-            idx = selection[0]
-            if idx < len(self.users):
-                self.result = self.users[idx]
-                self.dialog.destroy()
-    
-    def _delete_user(self):
-        """Delete selected user"""
-        selection = self.user_listbox.curselection()
-        if selection and self.users:
-            idx = selection[0]
-            if idx < len(self.users):
-                user = self.users[idx]
-                if messagebox.askyesno("Confirm Delete", 
-                                      f"Delete user '{user['display_name']}'?"):
-                    self.user_db.delete_user(user['user_id'])
-                    self._refresh_list()
+
 
 
 class YouTubeCommentDownloaderGUI:
@@ -260,6 +408,7 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="Limit (optional):").grid(row=row, column=0, sticky=tk.W, pady=5)
         self.limit_entry = ttk.Entry(main_frame, width=20)
         self.limit_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
+        self.limit_entry.insert(0, str(DEFAULT_COMMENT_LIMIT))  # Default limit
         ttk.Label(main_frame, text="(number of comments)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         
@@ -373,7 +522,8 @@ class YouTubeCommentDownloaderGUI:
     
     def _open_user_manager(self):
         """Open the user database manager dialog"""
-        dialog = UserDatabaseDialog(self.root, self.user_db)
+        export_folder = self.folder_entry.get().strip()
+        dialog = UserDatabaseDialog(self.root, self.user_db, export_folder)
         self.root.wait_window(dialog.dialog)
         
         # Refresh the dropdown
@@ -437,6 +587,34 @@ class YouTubeCommentDownloaderGUI:
             return url_or_id
         
         return None
+    
+    def _extract_post_id(self, url_or_id):
+        """
+        Extract YouTube post ID from URL
+        
+        Supports post URL format:
+        - https://www.youtube.com/post/UgkxKAIenznpuQyqwQkt0_aAnz5SQoK5rwAY
+        
+        Args:
+            url_or_id: YouTube URL
+            
+        Returns:
+            Post ID if valid post URL, None otherwise
+        """
+        url_or_id = url_or_id.strip()
+        
+        # Check if it's a post URL
+        post_pattern = r'youtube\.com\/post\/([A-Za-z0-9_-]+)'
+        match = re.search(post_pattern, url_or_id)
+        
+        if match:
+            return match.group(1)
+        
+        return None
+    
+    def _is_post_url(self, url):
+        """Check if URL is a community post"""
+        return '/post/' in url
     
     def _log_status(self, message):
         """Add message to status text area"""
@@ -580,14 +758,32 @@ class YouTubeCommentDownloaderGUI:
                 filter_user_id = user['user_id']
                 filter_user_name = user['display_name']
             
-            # Determine if input is URL or ID
-            video_id = self._extract_video_id(url_or_id)
-            if not video_id:
-                raise Exception("Invalid YouTube URL or video ID")
+            # Determine if input is a post or video
+            is_post = self._is_post_url(url_or_id)
             
-            full_url = f"https://www.youtube.com/watch?v={video_id}"
+            if is_post:
+                # Handle community post
+                post_id = self._extract_post_id(url_or_id)
+                if not post_id:
+                    raise Exception("Invalid YouTube post URL")
+                
+                full_url = f"https://www.youtube.com/post/{post_id}"
+                content_id = post_id
+                content_type = "post"
+                
+                self._log_status(f"Downloading YouTube comments for community post: {post_id}")
+            else:
+                # Handle video
+                video_id = self._extract_video_id(url_or_id)
+                if not video_id:
+                    raise Exception("Invalid YouTube URL or video ID")
+                
+                full_url = f"https://www.youtube.com/watch?v={video_id}"
+                content_id = video_id
+                content_type = "video"
+                
+                self._log_status(f"Downloading YouTube comments for video: {video_id}")
             
-            self._log_status(f"Downloading YouTube comments for video: {video_id}")
             self._log_status(f"Sort: {sort_display}")
             if language:
                 self._log_status(f"Language: {language}")
@@ -605,24 +801,35 @@ class YouTubeCommentDownloaderGUI:
             self._log_status(f"Export format: {export_format}")
             self._log_status("")
             
-            # Create downloader
-            downloader = YoutubeCommentDownloader()
-            
-            # Get video metadata
-            self._log_status("Fetching video metadata...")
-            metadata = downloader.get_video_metadata(full_url)
+            # Create appropriate downloader
+            if is_post:
+                from .post_downloader import YoutubePostDownloader
+                downloader = YoutubePostDownloader()
+                
+                # Get post metadata
+                self._log_status("Fetching post metadata...")
+                metadata = downloader.get_post_metadata(full_url)
+            else:
+                downloader = YoutubeCommentDownloader()
+                
+                # Get video metadata
+                self._log_status("Fetching video metadata...")
+                metadata = downloader.get_video_metadata(full_url)
             
             if not metadata:
-                raise Exception("Could not extract video metadata")
+                raise Exception(f"Could not extract {content_type} metadata")
             
-            video_title = metadata.get('title', 'Unknown Video')
+            content_title = metadata.get('title', f'Unknown {content_type.title()}')
             channel_name = metadata.get('channel_name', 'Unknown Creator')
             channel_id = metadata.get('channel_id', '')
             
-            self._log_status(f"Video: {video_title}")
+            if is_post:
+                self._log_status(f"Post: {content_title}")
+            else:
+                self._log_status(f"Video: {content_title}")
             self._log_status(f"Channel: {channel_name}")
             
-            # Auto-add video author to database
+            # Auto-add content author to database
             if channel_id and channel_name:
                 channel_thumbnail = metadata.get('channel_thumbnail', '')
                 self.user_db.add_user(
@@ -634,7 +841,7 @@ class YouTubeCommentDownloaderGUI:
                 )
                 self._log_status(f"Added '{channel_name}' to user database")
             
-            # Set filter user if filtering by video author
+            # Set filter user if filtering by content author
             if filter_mode == "video_author":
                 filter_user_id = channel_id
                 filter_user_name = channel_name
@@ -645,7 +852,10 @@ class YouTubeCommentDownloaderGUI:
             self._log_status("")
             
             # Get comment generator
-            generator = downloader.get_comments(video_id, sort_by, language)
+            if is_post:
+                generator = downloader.get_post_comments(content_id, sort_by, language)
+            else:
+                generator = downloader.get_comments(content_id, sort_by, language)
             
             # Download comments to list
             all_comments = []
@@ -695,25 +905,36 @@ class YouTubeCommentDownloaderGUI:
             output_path, output_folder = create_export_path(
                 base_folder=export_folder,
                 creator_name=channel_name,
-                video_title=video_title,
+                video_title=content_title,
                 export_format=file_extension,
-                is_filtered=is_filtered
+                is_filtered=is_filtered,
+                is_post=is_post
             )
             
             self._log_status("")
             self._log_status(f"Saving to: {output_path}")
             
+            # If post has images, download them
+            if is_post and metadata.get('images'):
+                self._log_status("Downloading post images...")
+                image_paths = downloader.download_post_images(metadata['images'], output_folder)
+                self._log_status(f"Downloaded {len(image_paths)} image(s)")
+                metadata['local_image_paths'] = image_paths
+            
             # Write output based on format
             if export_format == "Dark HTML":
                 filter_label = filter_user_name if is_filtered else None
-                generate_html_output(filtered_comments, output_path, filter_label)
+                post_metadata = metadata if is_post else None
+                generate_html_output(filtered_comments, output_path, filter_label, post_metadata)
             elif export_format == "JSON":
                 filter_label = filter_user_name if is_filtered else None
-                generate_json_output(filtered_comments, output_path, filter_label)
+                post_metadata = metadata if is_post else None
+                generate_json_output(filtered_comments, output_path, filter_label, post_metadata)
             elif export_format == "PDF":
                 try:
                     filter_label = filter_user_name if is_filtered else None
-                    generate_pdf_output(filtered_comments, output_path, filter_label)
+                    post_metadata = metadata if is_post else None
+                    generate_pdf_output(filtered_comments, output_path, filter_label, post_metadata)
                 except ImportError as e:
                     self.root.after(0, self._log_status, "")
                     self.root.after(0, self._log_status, f"PDF export error: {str(e)}")
@@ -723,9 +944,9 @@ class YouTubeCommentDownloaderGUI:
             
             # If include_raw_txt is checked, also export to TXT in Raw folder
             if include_raw_txt:
-                # Get the creator folder (parent of output_folder)
-                creator_folder = os.path.dirname(output_folder)
-                raw_folder = os.path.join(creator_folder, 'Raw')
+                # Raw folder should be inside the content folder (videos/ or posts/)
+                # output_folder is the videos/ or posts/ directory
+                raw_folder = os.path.join(output_folder, 'Raw')
                 os.makedirs(raw_folder, exist_ok=True)
                 
                 # Create TXT filename
@@ -735,7 +956,8 @@ class YouTubeCommentDownloaderGUI:
                 
                 self._log_status(f"Also saving TXT to: {txt_path}")
                 filter_label = filter_user_name if is_filtered else None
-                generate_txt_output(filtered_comments, txt_path, filter_label)
+                post_metadata = metadata if is_post else None
+                generate_txt_output(filtered_comments, txt_path, filter_label, post_metadata)
             
             elapsed = time.time() - start_time
             self.root.after(0, self._log_status, "")
@@ -776,6 +998,29 @@ class YouTubeCommentDownloaderGUI:
 
 def main():
     """Main entry point for the GUI"""
+    # Fix Mac app name in dock
+    try:
+        import platform
+        if platform.system() == 'Darwin':
+            try:
+                # Try different pyobjc imports
+                try:
+                    from Foundation import NSBundle
+                except ImportError:
+                    from AppKit import NSBundle
+                
+                bundle = NSBundle.mainBundle()
+                if bundle:
+                    info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
+                    if info:
+                        info['CFBundleName'] = 'YouTube Comment Downloader'
+            except ImportError:
+                # pyobjc not installed, skip Mac-specific naming
+                pass
+    except Exception:
+        # Ignore any errors in Mac app naming
+        pass
+    
     root = tk.Tk()
     app = YouTubeCommentDownloaderGUI(root)
     root.mainloop()

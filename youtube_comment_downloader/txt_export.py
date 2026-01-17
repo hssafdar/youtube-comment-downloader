@@ -4,8 +4,10 @@ Plain text export functionality for YouTube comments
 Generates readable plain text transcripts with threading
 """
 
+import os
 
-def generate_txt_output(comments, output_path, filtered_user=None):
+
+def generate_txt_output(comments, output_path, filtered_user=None, post_metadata=None):
     """
     Generate a plain text file with comments
     
@@ -13,6 +15,7 @@ def generate_txt_output(comments, output_path, filtered_user=None):
         comments: List of comment dictionaries
         output_path: Path to output TXT file
         filtered_user: Username that was filtered (for display in header)
+        post_metadata: Optional post metadata dict (for community posts)
     """
     # Build comment hierarchy
     comment_map = {c['cid']: c for c in comments}
@@ -36,10 +39,29 @@ def generate_txt_output(comments, output_path, filtered_user=None):
     with open(output_path, 'w', encoding='utf-8') as f:
         # Write header
         f.write("=" * 80 + "\n")
-        f.write("YouTube Comments\n")
+        if post_metadata:
+            f.write("YouTube Community Post Comments\n")
+        else:
+            f.write("YouTube Comments\n")
         if filtered_user:
             f.write(f"Filtered by: {filtered_user}\n")
         f.write("=" * 80 + "\n\n")
+        
+        # Write post content if available
+        if post_metadata:
+            post_content = post_metadata.get('content', '')
+            if post_content:
+                f.write("POST CONTENT:\n")
+                f.write("-" * 80 + "\n")
+                f.write(post_content + "\n")
+                f.write("-" * 80 + "\n\n")
+            
+            post_images = post_metadata.get('local_image_paths', [])
+            if post_images:
+                f.write(f"POST IMAGES: {len(post_images)} image(s)\n")
+                for img in post_images:
+                    f.write(f"  - {os.path.basename(img)}\n")
+                f.write("\n")
         
         if not root_comments:
             f.write("No comments available.\n")
