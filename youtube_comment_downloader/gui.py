@@ -94,7 +94,7 @@ class YouTubeCommentDownloaderGUI:
         self.filter_user_entry = ttk.Entry(main_frame, width=20)
         self.filter_user_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
         self.filter_user_entry.insert(0, "")
-        ttk.Label(main_frame, text="(e.g., @username)").grid(row=row, column=2, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="(display name, not @handle)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         
         # Pretty output
@@ -221,13 +221,12 @@ class YouTubeCommentDownloaderGUI:
         
         for comment in all_comments:
             # Check if this comment is by the target user
+            # Note: 'author' contains the display name (e.g., "John Doe")
+            # 'channel' contains the channel ID (e.g., "UC123...") not the handle
             author = comment.get('author', '').lower()
-            channel = comment.get('channel', '').lower()
             
-            # Match by author name or channel ID
-            is_target_user = (author == target_user_lower or 
-                            channel == target_user_lower or
-                            f"@{channel}" == target_user_lower)
+            # Match by author display name (case-insensitive)
+            is_target_user = author == target_user_lower
             
             if is_target_user:
                 # Add the user's comment
