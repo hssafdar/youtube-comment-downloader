@@ -585,6 +585,34 @@ class YouTubeCommentDownloaderGUI:
         
         return None
     
+    def _extract_post_id(self, url_or_id):
+        """
+        Extract YouTube post ID from URL
+        
+        Supports post URL format:
+        - https://www.youtube.com/post/UgkxKAIenznpuQyqwQkt0_aAnz5SQoK5rwAY
+        
+        Args:
+            url_or_id: YouTube URL
+            
+        Returns:
+            Post ID if valid post URL, None otherwise
+        """
+        url_or_id = url_or_id.strip()
+        
+        # Check if it's a post URL
+        post_pattern = r'youtube\.com\/post\/([A-Za-z0-9_-]+)'
+        match = re.search(post_pattern, url_or_id)
+        
+        if match:
+            return match.group(1)
+        
+        return None
+    
+    def _is_post_url(self, url):
+        """Check if URL is a community post"""
+        return '/post/' in url
+    
     def _log_status(self, message):
         """Add message to status text area"""
         self.status_text.insert(tk.END, message + "\n")
@@ -727,14 +755,32 @@ class YouTubeCommentDownloaderGUI:
                 filter_user_id = user['user_id']
                 filter_user_name = user['display_name']
             
-            # Determine if input is URL or ID
-            video_id = self._extract_video_id(url_or_id)
-            if not video_id:
-                raise Exception("Invalid YouTube URL or video ID")
+            # Determine if input is a post or video
+            is_post = self._is_post_url(url_or_id)
             
-            full_url = f"https://www.youtube.com/watch?v={video_id}"
+            if is_post:
+                # Handle community post
+                post_id = self._extract_post_id(url_or_id)
+                if not post_id:
+                    raise Exception("Invalid YouTube post URL")
+                
+                full_url = f"https://www.youtube.com/post/{post_id}"
+                content_id = post_id
+                content_type = "post"
+                
+                self._log_status(f"Downloading YouTube comments for community post: {post_id}")
+            else:
+                # Handle video
+                video_id = self._extract_video_id(url_or_id)
+                if not video_id:
+                    raise Exception("Invalid YouTube URL or video ID")
+                
+                full_url = f"https://www.youtube.com/watch?v={video_id}"
+                content_id = video_id
+                content_type = "video"
+                
+                self._log_status(f"Downloading YouTube comments for video: {video_id}")
             
-            self._log_status(f"Downloading YouTube comments for video: {video_id}")
             self._log_status(f"Sort: {sort_display}")
             if language:
                 self._log_status(f"Language: {language}")
@@ -752,24 +798,35 @@ class YouTubeCommentDownloaderGUI:
             self._log_status(f"Export format: {export_format}")
             self._log_status("")
             
-            # Create downloader
-            downloader = YoutubeCommentDownloader()
-            
-            # Get video metadata
-            self._log_status("Fetching video metadata...")
-            metadata = downloader.get_video_metadata(full_url)
+            # Create appropriate downloader
+            if is_post:
+                from .post_downloader import YoutubePostDownloader
+                downloader = YoutubePostDownloader()
+                
+                # Get post metadata
+                self._log_status("Fetching post metadata...")
+                metadata = downloader.get_post_metadata(full_url)
+            else:
+                downloader = YoutubeCommentDownloader()
+                
+                # Get video metadata
+                self._log_status("Fetching video metadata...")
+                metadata = downloader.get_video_metadata(full_url)
             
             if not metadata:
-                raise Exception("Could not extract video metadata")
+                raise Exception(f"Could not extract {content_type} metadata")
             
-            video_title = metadata.get('title', 'Unknown Video')
+            content_title = metadata.get('title', f'Unknown {content_type.title()}')
             channel_name = metadata.get('channel_name', 'Unknown Creator')
             channel_id = metadata.get('channel_id', '')
             
-            self._log_status(f"Video: {video_title}")
+            if is_post:
+                self._log_status(f"Post: {content_title}")
+            else:
+                self._log_status(f"Video: {content_title}")
             self._log_status(f"Channel: {channel_name}")
             
-            # Auto-add video author to database
+            # Auto-add content author to database
             if channel_id and channel_name:
                 channel_thumbnail = metadata.get('channel_thumbnail', '')
                 self.user_db.add_user(
@@ -781,7 +838,7 @@ class YouTubeCommentDownloaderGUI:
                 )
                 self._log_status(f"Added '{channel_name}' to user database")
             
-            # Set filter user if filtering by video author
+            # Set filter user if filtering by content author
             if filter_mode == "video_author":
                 filter_user_id = channel_id
                 filter_user_name = channel_name
@@ -792,7 +849,10 @@ class YouTubeCommentDownloaderGUI:
             self._log_status("")
             
             # Get comment generator
-            generator = downloader.get_comments(video_id, sort_by, language)
+            if is_post:
+                generator = downloader.get_post_comments(content_id, sort_by, language)
+            else:
+                generator = downloader.get_comments(content_id, sort_by, language)
             
             # Download comments to list
             all_comments = []
@@ -842,25 +902,36 @@ class YouTubeCommentDownloaderGUI:
             output_path, output_folder = create_export_path(
                 base_folder=export_folder,
                 creator_name=channel_name,
-                video_title=video_title,
+                video_title=content_title,
                 export_format=file_extension,
-                is_filtered=is_filtered
+                is_filtered=is_filtered,
+                is_post=is_post
             )
             
             self._log_status("")
             self._log_status(f"Saving to: {output_path}")
             
+            # If post has images, download them
+            if is_post and metadata.get('images'):
+                self._log_status("Downloading post images...")
+                image_paths = downloader.download_post_images(metadata['images'], output_folder)
+                self._log_status(f"Downloaded {len(image_paths)} image(s)")
+                metadata['local_image_paths'] = image_paths
+            
             # Write output based on format
             if export_format == "Dark HTML":
                 filter_label = filter_user_name if is_filtered else None
-                generate_html_output(filtered_comments, output_path, filter_label)
+                post_metadata = metadata if is_post else None
+                generate_html_output(filtered_comments, output_path, filter_label, post_metadata)
             elif export_format == "JSON":
                 filter_label = filter_user_name if is_filtered else None
-                generate_json_output(filtered_comments, output_path, filter_label)
+                post_metadata = metadata if is_post else None
+                generate_json_output(filtered_comments, output_path, filter_label, post_metadata)
             elif export_format == "PDF":
                 try:
                     filter_label = filter_user_name if is_filtered else None
-                    generate_pdf_output(filtered_comments, output_path, filter_label)
+                    post_metadata = metadata if is_post else None
+                    generate_pdf_output(filtered_comments, output_path, filter_label, post_metadata)
                 except ImportError as e:
                     self.root.after(0, self._log_status, "")
                     self.root.after(0, self._log_status, f"PDF export error: {str(e)}")
@@ -882,7 +953,8 @@ class YouTubeCommentDownloaderGUI:
                 
                 self._log_status(f"Also saving TXT to: {txt_path}")
                 filter_label = filter_user_name if is_filtered else None
-                generate_txt_output(filtered_comments, txt_path, filter_label)
+                post_metadata = metadata if is_post else None
+                generate_txt_output(filtered_comments, txt_path, filter_label, post_metadata)
             
             elapsed = time.time() - start_time
             self.root.after(0, self._log_status, "")

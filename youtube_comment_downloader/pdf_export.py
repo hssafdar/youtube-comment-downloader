@@ -15,7 +15,7 @@ except ImportError:
     REPORTLAB_AVAILABLE = False
 
 
-def generate_pdf_output(comments, output_path, filtered_user=None):
+def generate_pdf_output(comments, output_path, filtered_user=None, post_metadata=None):
     """
     Generate a PDF file with comments
     
@@ -23,6 +23,7 @@ def generate_pdf_output(comments, output_path, filtered_user=None):
         comments: List of comment dictionaries
         output_path: Path to output PDF file
         filtered_user: Username that was filtered (for display in header)
+        post_metadata: Optional post metadata dict (for community posts)
     
     Raises:
         ImportError: If reportlab is not installed
