@@ -276,10 +276,11 @@ class UserDatabaseDialog:
                             import requests
                             from urllib.parse import urlparse
                             
-                            # Validate URL
+                            # Validate URL - ensure it's from trusted YouTube/Google domains
                             parsed = urlparse(img_url)
                             allowed_domains = ['ytimg.com', 'ggpht.com', 'googleusercontent.com', 'youtube.com']
-                            if not any(domain in parsed.netloc for domain in allowed_domains):
+                            # Use endswith to check domain suffix (prevents evil-ytimg.com attacks)
+                            if not any(parsed.netloc.endswith(domain) or parsed.netloc == domain for domain in allowed_domains):
                                 continue
                             
                             response = requests.get(img_url, timeout=30)
