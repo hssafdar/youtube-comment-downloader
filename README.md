@@ -63,20 +63,65 @@ youtube-comment-downloader-gui
 ```
 
 The GUI provides an easy-to-use interface with the following features:
+
+#### Core Features
 - Input fields for YouTube URL or video ID
 - Sort options (Popular or Recent)
 - Optional language setting
 - Optional limit on number of comments
-- **Filter by User** - Filter comments to show only those by a specific user (e.g., @username)
-  - When filtering, parent comments are also included when the user replied to them (for conversation context)
-- Pretty output option (indented JSON)
-- **Export as HTML** - Generate a YouTube-style HTML interface with:
-  - Clean, modern styling similar to YouTube's comment section
+- **Progress bar** with real-time percentage and comment count updates
+
+#### Export Formats
+Choose from three export formats:
+- **Dark HTML** - Generate a YouTube-style HTML interface with:
+  - Clean, modern dark mode styling similar to YouTube's comment section
   - Profile pictures (with fallback for missing avatars)
   - Collapsible reply threads
-  - Timestamps, like counts, and heart indicators
-- File browser for selecting output location
-- Real-time status updates during download
+  - Timestamps, like counts, and heart indicators (❤️) for creator-hearted comments
+- **TXT** - Plain text transcript with readable threading:
+  - Shows comment author, timestamp, and text
+  - Displays `[♥ Hearted by Creator]` tags for hearted comments
+  - Properly formatted reply chains with `↳` indicators
+- **JSON** - Structured JSON output with:
+  - Complete metadata including total comment count
+  - Nested reply threading
+  - `"heart": true/false` field for hearted comments
+
+#### User Filtering & Database
+- **Filter by User** dropdown with options:
+  - **None** - Download all comments (default)
+  - **Video Author** - Automatically filter to show only the video creator's comments
+  - **Saved Users** - Filter by users you've previously saved to the database
+  - **More...** - Opens the User Database Manager
+- **User Database Manager** - Manage saved users for filtering:
+  - View all saved users with profile pictures and channel information
+  - Automatically saves video authors when downloading their videos
+  - Select users for filtering in future downloads
+  - Delete users from the database
+  - Users persist between sessions
+- When filtering, parent comments are automatically included when the filtered user replied to them (for conversation context)
+
+#### Automatic Folder Organization
+- Select a base export folder once (remembered between sessions)
+- Files are automatically organized into a clean folder structure:
+  ```
+  [Export Folder]/
+  ├── [Creator Name]/
+  │   └── videos/
+  │       ├── [Video Title] - comments.html
+  │       ├── [Video Title] - comments - filtered.txt
+  │       └── ...
+  └── [Another Creator]/
+      └── ...
+  ```
+- Filenames are automatically sanitized for compatibility
+- After download completes, the export folder opens automatically
+
+#### Real-time Progress Tracking
+- Live progress bar showing download percentage
+- Status updates: "Downloading... 50/1,234 comments (4%)"
+- Comment count estimation before download begins
+- Updates every 10 comments for efficiency
 
 **Note:** The GUI uses Tkinter, which is included with Python on macOS (both system Python and Homebrew Python). No additional dependencies are required.
 
