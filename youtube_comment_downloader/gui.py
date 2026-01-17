@@ -517,6 +517,10 @@ class YouTubeCommentDownloaderGUI:
         # Refresh queue display
         self._refresh_queue_display()
     
+    def _is_busy(self):
+        """Check if download or queue processing is in progress"""
+        return self.is_downloading or self.is_processing_queue
+    
     def _update_filter_dropdown(self):
         """Update the filter dropdown with users from database"""
         # Get users from database
@@ -707,7 +711,7 @@ class YouTubeCommentDownloaderGUI:
     
     def _start_download(self):
         """Start the download process in a background thread (single video mode)"""
-        if self.is_downloading or self.is_processing_queue:
+        if self._is_busy():
             messagebox.showwarning("Download in Progress", "A download is already in progress")
             return
         
@@ -734,7 +738,7 @@ class YouTubeCommentDownloaderGUI:
     
     def _cancel_download(self):
         """Cancel the current download"""
-        if not self.is_downloading and not self.is_processing_queue:
+        if not self._is_busy():
             return
         
         self.cancel_requested = True
@@ -1257,9 +1261,12 @@ class YouTubeCommentDownloaderGUI:
         """Check if a video has already been downloaded"""
         try:
             # Check all subdirectories for files containing the video ID
+            # Use word boundary to avoid false positives (e.g., 'abc' matching 'xabcdef')
             for root, dirs, files in os.walk(export_folder):
                 for file in files:
-                    if video_id in file:
+                    # Check if video ID appears as a complete token in filename
+                    # YouTube video IDs are 11 characters long
+                    if len(video_id) == 11 and f"_{video_id}_" in file or file.startswith(f"{video_id}_") or f"_{video_id}." in file:
                         return True
         except Exception:
             pass
@@ -1437,7 +1444,7 @@ class YouTubeCommentDownloaderGUI:
     
     def _close_window(self):
         """Close the window"""
-        if self.is_downloading or self.is_processing_queue:
+        if self._is_busy():
             if not messagebox.askyesno("Download in Progress", 
                                       "A download is in progress. Are you sure you want to exit?"):
                 return

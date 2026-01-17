@@ -8,3 +8,6 @@ pyobjc-framework-Cocoa
 
 # For date picker calendar widget in GUI
 tkcalendar
+
+# For date filtering in GUI
+dateparser
