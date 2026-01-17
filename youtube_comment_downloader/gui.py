@@ -13,6 +13,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT
+from .html_export import generate_html_output
 
 INDENT = 4
 
@@ -88,10 +89,24 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="(number of comments)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         
+        # Filter by User
+        ttk.Label(main_frame, text="Filter by User (optional):").grid(row=row, column=0, sticky=tk.W, pady=5)
+        self.filter_user_entry = ttk.Entry(main_frame, width=20)
+        self.filter_user_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
+        self.filter_user_entry.insert(0, "")
+        ttk.Label(main_frame, text="(e.g., @username)").grid(row=row, column=2, sticky=tk.W, pady=5)
+        row += 1
+        
         # Pretty output
         self.pretty_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(main_frame, text="Pretty output (indented JSON)", 
                        variable=self.pretty_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        row += 1
+        
+        # HTML export
+        self.html_export_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(main_frame, text="Export as HTML", 
+                       variable=self.html_export_var, command=self._on_html_export_toggle).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
         row += 1
         
         # Output file
@@ -136,20 +151,101 @@ class YouTubeCommentDownloaderGUI:
     
     def _browse_output(self):
         """Open file dialog to select output file"""
+        # Determine default extension based on HTML export checkbox
+        if self.html_export_var.get():
+            default_ext = ".html"
+            filetypes = [("HTML files", "*.html"), ("All files", "*.*")]
+        else:
+            default_ext = ".json"
+            filetypes = [("JSON files", "*.json"), ("All files", "*.*")]
+        
         filename = filedialog.asksaveasfilename(
             title="Select output file",
-            defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+            defaultextension=default_ext,
+            filetypes=filetypes
         )
         if filename:
             self.output_entry.delete(0, tk.END)
             self.output_entry.insert(0, filename)
+    
+    def _on_html_export_toggle(self):
+        """Handle HTML export checkbox toggle"""
+        # Update the output file extension if one is already selected
+        current_output = self.output_entry.get().strip()
+        if current_output:
+            if self.html_export_var.get():
+                # Switch to .html
+                if current_output.endswith('.json'):
+                    new_output = current_output[:-5] + '.html'
+                    self.output_entry.delete(0, tk.END)
+                    self.output_entry.insert(0, new_output)
+            else:
+                # Switch to .json
+                if current_output.endswith('.html'):
+                    new_output = current_output[:-5] + '.json'
+                    self.output_entry.delete(0, tk.END)
+                    self.output_entry.insert(0, new_output)
     
     def _log_status(self, message):
         """Add message to status text area"""
         self.status_text.insert(tk.END, message + "\n")
         self.status_text.see(tk.END)
         self.status_text.update_idletasks()
+    
+    def _filter_comments_by_user(self, all_comments, target_user):
+        """
+        Filter comments to show only those by the specified user
+        Also include parent comments of user's replies for context
+        
+        Args:
+            all_comments: List of all comment dictionaries
+            target_user: Username to filter (with or without @)
+        
+        Returns:
+            List of filtered comments
+        """
+        if not target_user:
+            return all_comments
+        
+        # Normalize target user (remove @ if present)
+        target_user = target_user.strip()
+        if target_user.startswith('@'):
+            target_user = target_user[1:]
+        target_user_lower = target_user.lower()
+        
+        # Build a map of comment IDs to comments for lookup
+        comment_map = {c['cid']: c for c in all_comments}
+        
+        result = []
+        result_cids = set()
+        
+        for comment in all_comments:
+            # Check if this comment is by the target user
+            author = comment.get('author', '').lower()
+            channel = comment.get('channel', '').lower()
+            
+            # Match by author name or channel ID
+            is_target_user = (author == target_user_lower or 
+                            channel == target_user_lower or
+                            f"@{channel}" == target_user_lower)
+            
+            if is_target_user:
+                # Add the user's comment
+                if comment['cid'] not in result_cids:
+                    result.append(comment)
+                    result_cids.add(comment['cid'])
+                
+                # If it's a reply, also include the parent comment
+                if comment.get('reply'):
+                    parent_cid = comment['cid'].rsplit('.', 1)[0]
+                    parent = comment_map.get(parent_cid)
+                    if parent and parent['cid'] not in result_cids:
+                        # Insert parent before the reply
+                        idx = result.index(comment)
+                        result.insert(idx, parent)
+                        result_cids.add(parent['cid'])
+        
+        return result
     
     def _validate_inputs(self):
         """Validate user inputs"""
@@ -209,6 +305,8 @@ class YouTubeCommentDownloaderGUI:
             limit_text = self.limit_entry.get().strip()
             limit = int(limit_text) if limit_text else None
             pretty = self.pretty_var.get()
+            filter_user = self.filter_user_entry.get().strip() or None
+            html_export = self.html_export_var.get()
             
             # Determine if input is URL or ID
             is_url = url_or_id.startswith('http://') or url_or_id.startswith('https://')
@@ -226,6 +324,10 @@ class YouTubeCommentDownloaderGUI:
                 self._log_status(f"Language: {language}")
             if limit:
                 self._log_status(f"Limit: {limit}")
+            if filter_user:
+                self._log_status(f"Filter by user: {filter_user}")
+            if html_export:
+                self._log_status(f"Export format: HTML")
             self._log_status(f"Output: {output_file}")
             self._log_status("")
             
@@ -238,42 +340,65 @@ class YouTubeCommentDownloaderGUI:
             else:
                 generator = downloader.get_comments(url_or_id, sort_by, language)
             
-            # Download and write comments
-            fp = None
+            # Download comments to list (needed for filtering and HTML export)
+            all_comments = []
             count = 0
             start_time = time.time()
             
-            try:
-                comment = next(generator, None)
-                
-                while comment:
-                    if not fp:
-                        fp = io.open(output_file, 'w', encoding='utf8')
-                    if pretty and count == 0:
+            self._log_status("Downloading comments...")
+            for comment in generator:
+                all_comments.append(comment)
+                count += 1
+                if limit and count >= limit:
+                    break
+                if count % 10 == 0:
+                    self.root.after(0, self._log_status, f"Downloaded {count} comment(s)...")
+            
+            if count > 0:
+                self.root.after(0, self._log_status, f"Downloaded {count} comment(s)...")
+            
+            # Apply user filter if specified
+            filtered_comments = all_comments
+            if filter_user:
+                self._log_status("")
+                self._log_status("Applying user filter...")
+                filtered_comments = self._filter_comments_by_user(all_comments, filter_user)
+                self.root.after(0, self._log_status, 
+                              f"Filtered to {len(filtered_comments)} comment(s) by {filter_user}")
+            
+            # Write output
+            if html_export:
+                # Generate HTML
+                self._log_status("")
+                self._log_status("Generating HTML output...")
+                generate_html_output(filtered_comments, output_file, filter_user)
+            else:
+                # Write JSON
+                fp = None
+                try:
+                    fp = io.open(output_file, 'w', encoding='utf8')
+                    if pretty:
                         fp.write('{\n' + ' ' * INDENT + '"comments": [\n')
                     
-                    comment_str = to_json(comment, indent=INDENT if pretty else None)
-                    comment = None if limit and count >= limit else next(generator, None)
-                    comment_str = comment_str + ',' if pretty and comment is not None else comment_str
-                    print(comment_str.decode('utf-8') if isinstance(comment_str, bytes) else comment_str, file=fp)
+                    for i, comment in enumerate(filtered_comments):
+                        comment_str = to_json(comment, indent=INDENT if pretty else None)
+                        if pretty and i < len(filtered_comments) - 1:
+                            comment_str = comment_str + ','
+                        print(comment_str.decode('utf-8') if isinstance(comment_str, bytes) else comment_str, file=fp)
                     
-                    count += 1
-                    if count % 10 == 0 or comment is None:  # Update status every 10 comments or at end
-                        self.root.after(0, self._log_status, f"Downloaded {count} comment(s)...")
-                
-                if pretty and fp:
-                    fp.write(' ' * INDENT + ']\n}')
-            finally:
-                if fp:
-                    fp.close()
+                    if pretty:
+                        fp.write(' ' * INDENT + ']\n}')
+                finally:
+                    if fp:
+                        fp.close()
             
             elapsed = time.time() - start_time
-            if count > 0:
+            if len(filtered_comments) > 0:
                 self.root.after(0, self._log_status, "")
                 self.root.after(0, self._log_status, f"[{elapsed:.2f} seconds] Done!")
-                self.root.after(0, self._log_status, f"Total comments downloaded: {count}")
+                self.root.after(0, self._log_status, f"Total comments in output: {len(filtered_comments)}")
                 self.root.after(0, messagebox.showinfo, "Download Complete", 
-                               f"Successfully downloaded {count} comments to {output_file}")
+                               f"Successfully saved {len(filtered_comments)} comments to {output_file}")
             else:
                 self.root.after(0, self._log_status, "No comments available!")
                 self.root.after(0, messagebox.showwarning, "No Comments", "No comments were found")
