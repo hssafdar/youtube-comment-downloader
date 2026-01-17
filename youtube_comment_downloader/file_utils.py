@@ -97,6 +97,6 @@ def open_folder(folder_path):
             subprocess.run(['open', folder_path], check=False)
         else:  # Linux and other Unix-like systems
             subprocess.run(['xdg-open', folder_path], check=False)
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         # Silently fail if we can't open the folder
         pass

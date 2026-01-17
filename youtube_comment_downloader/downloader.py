@@ -97,7 +97,6 @@ class YoutubeCommentDownloader:
                     simple_text = count_text.get('simpleText', '')
                     if simple_text:
                         # Extract number from text like "1,234 Comments"
-                        import re
                         match = re.search(r'([\d,]+)', simple_text)
                         if match:
                             metadata['comment_count'] = int(match.group(1).replace(',', ''))

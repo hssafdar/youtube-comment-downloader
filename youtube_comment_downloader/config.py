@@ -33,7 +33,7 @@ class Config:
                     loaded = json.load(f)
                     # Update settings with loaded values, keeping defaults for missing keys
                     self.settings.update(loaded)
-        except Exception:
+        except (FileNotFoundError, json.JSONDecodeError, PermissionError, OSError):
             # If there's any error loading, just use defaults
             pass
     
@@ -45,7 +45,7 @@ class Config:
             
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, indent=2, ensure_ascii=False)
-        except Exception:
+        except (PermissionError, OSError):
             # Silently fail if we can't save
             pass
     

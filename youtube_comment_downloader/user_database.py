@@ -68,7 +68,7 @@ class UserDatabase:
             conn.commit()
             conn.close()
             return True
-        except Exception:
+        except (sqlite3.Error, OSError):
             return False
     
     def get_user(self, user_id):
@@ -93,7 +93,7 @@ class UserDatabase:
             if row:
                 return dict(row)
             return None
-        except Exception:
+        except (sqlite3.Error, OSError):
             return None
     
     def get_all_users(self):
@@ -113,7 +113,7 @@ class UserDatabase:
             conn.close()
             
             return [dict(row) for row in rows]
-        except Exception:
+        except (sqlite3.Error, OSError):
             return []
     
     def get_dropdown_users(self):
@@ -133,7 +133,7 @@ class UserDatabase:
             conn.close()
             
             return [dict(row) for row in rows]
-        except Exception:
+        except (sqlite3.Error, OSError):
             return []
     
     def update_dropdown_status(self, user_id, in_dropdown):
@@ -159,7 +159,7 @@ class UserDatabase:
             conn.commit()
             conn.close()
             return True
-        except Exception:
+        except (sqlite3.Error, OSError):
             return False
     
     def delete_user(self, user_id):
@@ -181,7 +181,7 @@ class UserDatabase:
             conn.commit()
             conn.close()
             return True
-        except Exception:
+        except (sqlite3.Error, OSError):
             return False
     
     def clear_all_users(self):
@@ -200,7 +200,7 @@ class UserDatabase:
             conn.commit()
             conn.close()
             return True
-        except Exception:
+        except (sqlite3.Error, OSError):
             return False
     
     def search_users(self, query):
@@ -227,5 +227,5 @@ class UserDatabase:
             conn.close()
             
             return [dict(row) for row in rows]
-        except Exception:
+        except (sqlite3.Error, OSError):
             return []
