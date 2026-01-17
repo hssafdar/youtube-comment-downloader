@@ -15,6 +15,21 @@ Or directly from the GitHub repository:
 pip install https://github.com/egbertbouman/youtube-comment-downloader/archive/master.zip
 ```
 
+#### Optional Dependencies
+
+For enhanced functionality, you can install optional packages:
+
+```bash
+# For PDF export support
+pip install reportlab
+
+# For profile picture display in GUI (future feature)
+pip install Pillow
+
+# Or install all optional dependencies at once
+pip install -r requirements-optional.txt
+```
+
 ### Usage as command-line interface
 ```
 $ youtube-comment-downloader --help
@@ -78,14 +93,25 @@ Choose from three export formats:
   - Profile pictures (with fallback for missing avatars)
   - Collapsible reply threads
   - Timestamps, like counts, and heart indicators (❤️) for creator-hearted comments
-- **TXT** - Plain text transcript with readable threading:
-  - Shows comment author, timestamp, and text
-  - Displays `[♥ Hearted by Creator]` tags for hearted comments
-  - Properly formatted reply chains with `↳` indicators
 - **JSON** - Structured JSON output with:
   - Complete metadata including total comment count
   - Nested reply threading
   - `"heart": true/false` field for hearted comments
+- **PDF** - Professional PDF document with formatted comments:
+  - Clean typography with proper spacing
+  - Hierarchical layout with indented replies
+  - Timestamps, like counts, and heart indicators
+  - Requires `reportlab` package: `pip install reportlab`
+
+#### Dual Export with Raw TXT
+- **Include Raw TXT** checkbox (enabled by default)
+- When checked, automatically creates a plain text version alongside your primary export format
+- TXT files are saved in a `Raw/` subfolder for better organization
+- No need to download comments twice - both formats are generated in one pass
+- Plain text format includes:
+  - Readable threading with `↳` reply indicators
+  - `[♥ Hearted by Creator]` tags for hearted comments
+  - Author names, timestamps, and like counts
 
 #### User Filtering & Database
 - **Filter by User** dropdown with options:
@@ -95,6 +121,11 @@ Choose from three export formats:
   - **More...** - Opens the User Database Manager
 - **User Database Manager** - Manage saved users for filtering:
   - View all saved users with profile pictures and channel information
+  - **Add User by URL** - New feature to add any YouTube channel:
+    - Click "Add User..." button
+    - Enter a YouTube channel URL (supports `@username`, `/channel/UC...`, `/c/name` formats)
+    - Automatically fetches channel name, ID, and profile picture
+    - Channel is added to your database for future filtering
   - Automatically saves video authors when downloading their videos
   - Select users for filtering in future downloads
   - Delete users from the database
@@ -108,13 +139,16 @@ Choose from three export formats:
   [Export Folder]/
   ├── [Creator Name]/
   │   └── videos/
-  │       ├── [Video Title] - comments.html
-  │       ├── [Video Title] - comments - filtered.txt
-  │       └── ...
+  │       ├── [Video Title] - comments.html      (or .json, .pdf)
+  │       ├── [Video Title] - comments - filtered.html
+  │       └── Raw/
+  │           ├── [Video Title] - comments.txt
+  │           └── [Video Title] - comments - filtered.txt
   └── [Another Creator]/
       └── ...
   ```
 - Filenames are automatically sanitized for compatibility
+- `Raw/` subfolder is created when "Include Raw TXT" is enabled
 - After download completes, the export folder opens automatically
 
 #### Real-time Progress Tracking
