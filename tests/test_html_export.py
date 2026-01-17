@@ -185,3 +185,59 @@ def test_html_xss_protection():
     finally:
         if os.path.exists(output_path):
             os.unlink(output_path)
+
+
+def test_html_dark_mode():
+    """Test HTML generation with dark mode"""
+    comments = [
+        {
+            'cid': 'test1',
+            'text': 'Test comment',
+            'time': '1 day ago',
+            'author': 'Test User',
+            'channel': 'UC123',
+            'votes': '10',
+            'replies': 0,
+            'photo': '',
+            'heart': False,
+            'reply': False
+        }
+    ]
+    
+    # Test light mode
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+        light_path = f.name
+    
+    # Test dark mode
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False) as f:
+        dark_path = f.name
+    
+    try:
+        generate_html_output(comments, light_path, dark_mode=False)
+        generate_html_output(comments, dark_path, dark_mode=True)
+        
+        # Read both files
+        with open(light_path, 'r', encoding='utf-8') as f:
+            light_content = f.read()
+        
+        with open(dark_path, 'r', encoding='utf-8') as f:
+            dark_content = f.read()
+        
+        # Check light mode colors
+        assert 'background-color: #f9f9f9' in light_content
+        assert 'background-color: white' in light_content
+        
+        # Check dark mode colors
+        assert 'background-color: #0f0f0f' in dark_content
+        assert 'background-color: #212121' in dark_content
+        assert 'color: #f1f1f1' in dark_content
+        
+        # Both should have the same content
+        assert 'Test comment' in light_content
+        assert 'Test comment' in dark_content
+        
+    finally:
+        if os.path.exists(light_path):
+            os.unlink(light_path)
+        if os.path.exists(dark_path):
+            os.unlink(dark_path)

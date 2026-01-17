@@ -109,6 +109,12 @@ class YouTubeCommentDownloaderGUI:
                        variable=self.html_export_var, command=self._on_html_export_toggle).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
         row += 1
         
+        # Dark mode HTML
+        self.dark_mode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(main_frame, text="Dark mode HTML", 
+                       variable=self.dark_mode_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        row += 1
+        
         # Output file
         ttk.Label(main_frame, text="Output file:").grid(row=row, column=0, sticky=tk.W, pady=5)
         self.output_entry = ttk.Entry(main_frame, width=40)
@@ -306,6 +312,7 @@ class YouTubeCommentDownloaderGUI:
             pretty = self.pretty_var.get()
             filter_user = self.filter_user_entry.get().strip() or None
             html_export = self.html_export_var.get()
+            dark_mode = self.dark_mode_var.get()
             
             # Determine if input is URL or ID
             is_url = url_or_id.startswith('http://') or url_or_id.startswith('https://')
@@ -370,7 +377,9 @@ class YouTubeCommentDownloaderGUI:
                 # Generate HTML
                 self._log_status("")
                 self._log_status("Generating HTML output...")
-                generate_html_output(filtered_comments, output_file, filter_user)
+                if dark_mode:
+                    self._log_status("Using dark mode theme...")
+                generate_html_output(filtered_comments, output_file, filter_user, dark_mode)
             else:
                 # Write JSON
                 fp = None
