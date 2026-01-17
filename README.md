@@ -23,12 +23,14 @@ For enhanced functionality, you can install optional packages:
 # For PDF export support
 pip install reportlab
 
-# For profile picture display in GUI (future feature)
-pip install Pillow
+# For macOS: Fix app name in dock (shows "YouTube Comment Downloader" instead of "Python")
+pip install pyobjc-framework-Cocoa
 
 # Or install all optional dependencies at once
 pip install -r requirements-optional.txt
 ```
+
+**Note:** Pillow is now a required dependency (installed automatically) for profile picture display in the GUI.
 
 ### Usage as command-line interface
 ```
@@ -80,10 +82,10 @@ youtube-comment-downloader-gui
 The GUI provides an easy-to-use interface with the following features:
 
 #### Core Features
-- Input fields for YouTube URL or video ID
+- Input fields for YouTube URL, video ID, or **community post URL**
+- **Default limit of 1,000 comments** (can be changed or cleared for unlimited)
 - Sort options (Popular or Recent)
 - Optional language setting
-- Optional limit on number of comments
 - **Progress bar** with real-time percentage and comment count updates
 
 #### Export Formats
@@ -119,18 +121,33 @@ Choose from three export formats:
   - **Video Author** - Automatically filter to show only the video creator's comments
   - **Saved Users** - Filter by users you've previously saved to the database
   - **More...** - Opens the User Database Manager
-- **User Database Manager** - Manage saved users for filtering:
-  - View all saved users with profile pictures and channel information
-  - **Add User by URL** - New feature to add any YouTube channel:
+- **User Database Manager** - Enhanced dialog with improved UX:
+  - View all saved users with **circular profile pictures** (48x48) and channel information
+  - **Larger user entries** with display name and @handle
+  - **Folder button** (📁) next to each user - opens their folder in file explorer
+    - Greyed out if no folder exists yet
+    - Enabled when you've downloaded content from that user
+  - **Add User by URL** - Add any YouTube channel:
     - Click "Add User..." button
     - Enter a YouTube channel URL (supports `@username`, `/channel/UC...`, `/c/name` formats)
     - Automatically fetches channel name, ID, and profile picture
     - Channel is added to your database for future filtering
-  - Automatically saves video authors when downloading their videos
+  - Automatically saves video/post authors when downloading their content
   - Select users for filtering in future downloads
   - Delete users from the database
   - Users persist between sessions
 - When filtering, parent comments are automatically included when the filtered user replied to them (for conversation context)
+
+#### YouTube Community Posts Support
+- **Download comments from community posts** in addition to videos
+- Simply paste a post URL: `https://www.youtube.com/post/UgkxKAIe...`
+- Features:
+  - Extracts post content (text)
+  - Downloads attached images to `posts/assets/` folder
+  - Downloads all comments on the post
+  - Displays post content at the top of HTML/TXT/JSON exports
+  - Images are embedded in HTML exports
+- Posts are saved to a separate `posts/` folder (see folder structure below)
 
 #### Automatic Folder Organization
 - Select a base export folder once (remembered between sessions)
@@ -138,17 +155,25 @@ Choose from three export formats:
   ```
   [Export Folder]/
   ├── [Creator Name]/
-  │   └── videos/
-  │       ├── [Video Title] - comments.html      (or .json, .pdf)
-  │       ├── [Video Title] - comments - filtered.html
-  │       └── Raw/
-  │           ├── [Video Title] - comments.txt
-  │           └── [Video Title] - comments - filtered.txt
+  │   ├── videos/
+  │   │   ├── [Video Title] - comments.html      (or .json, .pdf)
+  │   │   ├── [Video Title] - comments - filtered.html
+  │   │   └── Raw/
+  │   │       ├── [Video Title] - comments.txt
+  │   │       └── [Video Title] - comments - filtered.txt
+  │   └── posts/
+  │       ├── [Post Title] - comments.html
+  │       ├── Raw/
+  │       │   └── [Post Title] - comments.txt
+  │       └── assets/
+  │           ├── post_image_1.jpg
+  │           └── post_image_2.png
   └── [Another Creator]/
       └── ...
   ```
 - Filenames are automatically sanitized for compatibility
-- `Raw/` subfolder is created when "Include Raw TXT" is enabled
+- `Raw/` subfolder is now inside `videos/` or `posts/` folders (created when "Include Raw TXT" is enabled)
+- `assets/` subfolder stores images from community posts
 - After download completes, the export folder opens automatically
 
 #### Real-time Progress Tracking
