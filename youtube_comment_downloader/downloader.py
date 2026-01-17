@@ -44,15 +44,15 @@ class YoutubeCommentDownloader:
                 pass
             time.sleep(sleep)
 
-    def get_video_author_channel_id(self, youtube_url):
+    def get_video_metadata(self, youtube_url):
         """
-        Extract the video author's channel ID from the page
+        Extract video metadata including title, author info, and comment count
         
         Args:
             youtube_url: YouTube video URL
             
         Returns:
-            Channel ID string, or None if not found
+            Dictionary with video metadata, or None if extraction fails
         """
         try:
             response = self.session.get(youtube_url)
@@ -65,23 +65,62 @@ class YoutubeCommentDownloader:
             html = response.text
             data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default='{}'))
             
-            # Try to find channel ID in the video owner renderer
+            metadata = {}
+            
+            # Extract video title
+            video_details = next(self.search_dict(data, 'videoDetails'), None)
+            if video_details:
+                metadata['title'] = video_details.get('title', '')
+                metadata['video_id'] = video_details.get('videoId', '')
+            
+            # Extract author/channel info
             owner_renderer = next(self.search_dict(data, 'videoOwnerRenderer'), None)
             if owner_renderer:
-                # Extract channel ID from navigationEndpoint
-                channel_id = owner_renderer.get('navigationEndpoint', {}).get('browseEndpoint', {}).get('browseId')
-                if channel_id:
-                    return channel_id
+                # Channel ID
+                metadata['channel_id'] = owner_renderer.get('navigationEndpoint', {}).get('browseEndpoint', {}).get('browseId')
+                
+                # Channel name
+                title_runs = owner_renderer.get('title', {}).get('runs', [])
+                if title_runs:
+                    metadata['channel_name'] = title_runs[0].get('text', '')
+                
+                # Profile picture
+                thumbnails = owner_renderer.get('thumbnail', {}).get('thumbnails', [])
+                if thumbnails:
+                    metadata['channel_thumbnail'] = thumbnails[-1].get('url', '')
             
-            # Fallback: try to find in other locations
-            # Look for channelId in the page
-            channel_match = re.search(r'"channelId":"([^"]+)"', html)
-            if channel_match:
-                return channel_match.group(1)
+            # Extract comment count (estimate)
+            comments_entry_renderer = next(self.search_dict(data, 'commentsEntryPointHeaderRenderer'), None)
+            if comments_entry_renderer:
+                count_text = comments_entry_renderer.get('commentCount', {})
+                if isinstance(count_text, dict):
+                    simple_text = count_text.get('simpleText', '')
+                    if simple_text:
+                        # Extract number from text like "1,234 Comments"
+                        match = re.search(r'([\d,]+)', simple_text)
+                        if match:
+                            metadata['comment_count'] = int(match.group(1).replace(',', ''))
+            
+            return metadata if metadata else None
                 
         except Exception:
             pass
         
+        return None
+
+    def get_video_author_channel_id(self, youtube_url):
+        """
+        Extract the video author's channel ID from the page
+        
+        Args:
+            youtube_url: YouTube video URL
+            
+        Returns:
+            Channel ID string, or None if not found
+        """
+        metadata = self.get_video_metadata(youtube_url)
+        if metadata:
+            return metadata.get('channel_id')
         return None
 
     def get_comments(self, youtube_id, *args, **kwargs):
