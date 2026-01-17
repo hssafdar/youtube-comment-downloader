@@ -42,17 +42,16 @@ def sanitize_filename(filename):
     return filename
 
 
-def create_export_path(base_folder, creator_name, video_title, export_format, is_filtered=False, is_post=False):
+def create_export_path(base_folder, creator_name, video_title, export_format, is_filtered=False):
     """
     Create the full export path following the folder organization structure
     
     Args:
         base_folder: Base export directory
         creator_name: Name of the content creator
-        video_title: Title of the video or post
+        video_title: Title of the video
         export_format: Export format (html, txt, json)
         is_filtered: Whether this is a filtered export
-        is_post: Whether this is a community post (vs video)
     
     Returns:
         Tuple of (full_path, directory_path)
@@ -63,11 +62,7 @@ def create_export_path(base_folder, creator_name, video_title, export_format, is
     
     # Build directory structure
     creator_folder = os.path.join(base_folder, safe_creator)
-    
-    if is_post:
-        content_folder = os.path.join(creator_folder, 'posts')
-    else:
-        content_folder = os.path.join(creator_folder, 'videos')
+    content_folder = os.path.join(creator_folder, 'videos')
     
     # Create directory if it doesn't exist
     os.makedirs(content_folder, exist_ok=True)
