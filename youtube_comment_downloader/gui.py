@@ -242,27 +242,30 @@ class YouTubeCommentDownloaderGUI:
             fp = None
             count = 0
             start_time = time.time()
-            comment = next(generator, None)
             
-            while comment:
-                if not fp:
-                    fp = io.open(output_file, 'w', encoding='utf8')
-                if pretty and count == 0:
-                    fp.write('{\n' + ' ' * INDENT + '"comments": [\n')
+            try:
+                comment = next(generator, None)
                 
-                comment_str = to_json(comment, indent=INDENT if pretty else None)
-                comment = None if limit and count >= limit else next(generator, None)
-                comment_str = comment_str + ',' if pretty and comment is not None else comment_str
-                print(comment_str.decode('utf-8') if isinstance(comment_str, bytes) else comment_str, file=fp)
+                while comment:
+                    if not fp:
+                        fp = io.open(output_file, 'w', encoding='utf8')
+                    if pretty and count == 0:
+                        fp.write('{\n' + ' ' * INDENT + '"comments": [\n')
+                    
+                    comment_str = to_json(comment, indent=INDENT if pretty else None)
+                    comment = None if limit and count >= limit else next(generator, None)
+                    comment_str = comment_str + ',' if pretty and comment is not None else comment_str
+                    print(comment_str.decode('utf-8') if isinstance(comment_str, bytes) else comment_str, file=fp)
+                    
+                    count += 1
+                    if count % 10 == 0 or comment is None:  # Update status every 10 comments or at end
+                        self.root.after(0, self._log_status, f"Downloaded {count} comment(s)...")
                 
-                count += 1
-                if count % 10 == 0 or comment is None:  # Update status every 10 comments or at end
-                    self.root.after(0, self._log_status, f"Downloaded {count} comment(s)...")
-            
-            if pretty and fp:
-                fp.write(' ' * INDENT + ']\n}')
-            if fp:
-                fp.close()
+                if pretty and fp:
+                    fp.write(' ' * INDENT + ']\n}')
+            finally:
+                if fp:
+                    fp.close()
             
             elapsed = time.time() - start_time
             if count > 0:
