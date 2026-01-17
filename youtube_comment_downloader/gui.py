@@ -293,14 +293,6 @@ class YouTubeCommentDownloaderGUI:
             self.folder_entry.insert(0, folder)
             self.config.set_export_folder(folder)
     
-    def _browse_output(self):
-        """Removed - using folder picker instead"""
-        pass
-    
-    def _on_html_export_toggle(self):
-        """Removed - using dropdown instead"""
-        pass
-    
     def _extract_video_id(self, url_or_id):
         """
         Extract YouTube video ID from URL or return the ID itself
