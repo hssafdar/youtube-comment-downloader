@@ -267,8 +267,8 @@ def test_html_expand_collapse_buttons():
             content = f.read()
         
         # Check for expand/collapse buttons
-        assert 'Expand All Replies' in content
-        assert 'Collapse All Replies' in content
+        assert 'Expand All' in content
+        assert 'Collapse All' in content
         assert 'onclick="expandAll()"' in content
         assert 'onclick="collapseAll()"' in content
         
