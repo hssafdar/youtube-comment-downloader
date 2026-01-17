@@ -557,7 +557,7 @@ class YouTubeCommentDownloaderGUI:
             start_time = time.time()
             
             # Estimate total if available
-            total_estimate = metadata.get('comment_count_estimate', 0)
+            total_estimate = metadata.get('comment_count', 0)
             
             self._log_status("Downloading comments...")
             for comment in generator:
