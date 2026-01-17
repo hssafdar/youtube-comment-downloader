@@ -886,6 +886,7 @@ class YouTubeCommentDownloaderGUI:
             self._log_status("Downloading comments...")
             for comment in generator:
                 # Check for cancellation
+                # Note: finally block will run even on early return
                 if self.cancel_requested:
                     self._log_status("Download cancelled by user")
                     return
