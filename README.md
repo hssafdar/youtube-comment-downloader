@@ -46,6 +46,34 @@ For Youtube IDs starting with - (dash) you will need to run the script with:
 `-y=idwithdash` or `--youtubeid=idwithdash`
 
 
+### GUI Usage
+
+A graphical user interface (GUI) is available for users who prefer not to use the command line.
+
+After installation, you can launch the GUI using:
+
+```
+python -m youtube_comment_downloader.gui
+```
+
+Or if you installed via pip, you can use the shortcut command:
+
+```
+youtube-comment-downloader-gui
+```
+
+The GUI provides an easy-to-use interface with the following features:
+- Input fields for YouTube URL or video ID
+- Sort options (Popular or Recent)
+- Optional language setting
+- Optional limit on number of comments
+- Pretty output option (indented JSON)
+- File browser for selecting output location
+- Real-time status updates during download
+
+**Note:** The GUI uses Tkinter, which is included with Python on macOS (both system Python and Homebrew Python). No additional dependencies are required.
+
+
 ### Usage as library
 You can also use this script as a library. For instance, if you want to print out the 10 most popular comments for a particular Youtube video you can do the following:
 
