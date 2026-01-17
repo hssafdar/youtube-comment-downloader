@@ -5,3 +5,6 @@ reportlab
 
 # For Mac app name in dock (macOS only)
 pyobjc-framework-Cocoa
+
+# For date picker calendar widget in GUI
+tkcalendar
