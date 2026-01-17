@@ -227,7 +227,7 @@ class YouTubeCommentDownloaderGUI:
             # Match by author name or channel ID
             is_target_user = (author == target_user_lower or 
                             channel == target_user_lower or
-                            f"@{channel}" == target_user_lower.lower())
+                            f"@{channel}" == target_user_lower)
             
             if is_target_user:
                 # Add the user's comment

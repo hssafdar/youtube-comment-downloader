@@ -279,8 +279,33 @@ def _generate_comment_html(comment, is_reply=False):
     channel = comment.get('channel', '')
     cid = html.escape(comment['cid'])
     
+    # Generate avatar initial (safely escaped for SVG)
+    # Use first character of unescaped author name, but ensure it's safe for SVG
+    author_raw = comment.get('author', 'Unknown')
+    avatar_initial = author_raw[0].upper() if author_raw else '?'
+    # Only use alphanumeric characters for avatar initial to ensure SVG safety
+    if not avatar_initial.isalnum():
+        avatar_initial = '?'
+    
     # Default avatar if photo URL is missing
-    avatar_html = f'<img src="{photo}" alt="{author}" class="avatar" onerror="this.src=\'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2250%22 cy=%2250%22 r=%2250%22 fill=%22%23e5e5e5%22/><text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 text-anchor=%22middle%22 font-size=%2240%22 fill=%22%23606060%22>{author[0].upper() if author else "?"}</text></svg>\'">' if photo else f'<div class="avatar" style="background-color: #e5e5e5; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 500; color: #606060;">{author[0].upper() if author else "?"}</div>'
+    if photo:
+        # Create fallback SVG data URL
+        svg_fallback = (
+            'data:image/svg+xml,'
+            '<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22>'
+            '<circle cx=%2250%22 cy=%2250%22 r=%2250%22 fill=%22%23e5e5e5%22/>'
+            f'<text x=%2250%25%22 y=%2250%25%22 dominant-baseline=%22middle%22 '
+            f'text-anchor=%22middle%22 font-size=%2240%22 fill=%22%23606060%22>{avatar_initial}</text>'
+            '</svg>'
+        )
+        avatar_html = f'<img src="{photo}" alt="{author}" class="avatar" onerror="this.src=\'{svg_fallback}\'">'
+    else:
+        # No photo provided, use div with initial
+        avatar_html = (
+            f'<div class="avatar" style="background-color: #e5e5e5; display: flex; '
+            f'align-items: center; justify-content: center; font-size: 18px; '
+            f'font-weight: 500; color: #606060;">{avatar_initial}</div>'
+        )
     
     # Channel link
     channel_url = f"https://www.youtube.com/channel/{channel}" if channel else "#"
