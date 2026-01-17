@@ -255,11 +255,32 @@ class UserDatabase:
             if not url.startswith('http'):
                 url = 'https://' + url
             
-            # Make request
+            # Extract channel ID directly from URL if it's a /channel/ URL
+            channel_id_match = re.search(r'/channel/(UC[A-Za-z0-9_-]+)', url)
+            if channel_id_match:
+                # For /channel/ URLs, we can extract ID directly
+                channel_id = channel_id_match.group(1)
+                # Still need to fetch the page for other info
+            else:
+                channel_id = None
+            
+            # Make request with better headers
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
             }
-            response = requests.get(url, headers=headers, timeout=30)
+            
+            # Set cookie to bypass consent
+            session = requests.Session()
+            session.headers.update(headers)
+            session.cookies.set('CONSENT', 'YES+cb', domain='.youtube.com')
+            
+            response = session.get(url, timeout=30)
             response.raise_for_status()
             
             html = response.text
@@ -276,38 +297,78 @@ class UserDatabase:
             # Extract channel metadata
             user_info = {}
             
-            # Try to find channel ID
-            # Method 1: From channelId in metadata
-            metadata = self._search_dict(data, 'channelId')
-            for channel_id in metadata:
-                if channel_id and isinstance(channel_id, str) and channel_id.startswith('UC'):
-                    user_info['user_id'] = channel_id
-                    break
+            # Use channel ID from URL if we found it
+            if channel_id:
+                user_info['user_id'] = channel_id
+            
+            # Try to find channel ID from page data
+            if 'user_id' not in user_info:
+                # Method 1: From channelId in metadata
+                metadata = self._search_dict(data, 'channelId')
+                for ch_id in metadata:
+                    if ch_id and isinstance(ch_id, str) and ch_id.startswith('UC') and len(ch_id) > 20:
+                        user_info['user_id'] = ch_id
+                        break
             
             # Method 2: From externalId
             if 'user_id' not in user_info:
                 external_ids = self._search_dict(data, 'externalId')
                 for ext_id in external_ids:
-                    if ext_id and isinstance(ext_id, str) and ext_id.startswith('UC'):
+                    if ext_id and isinstance(ext_id, str) and ext_id.startswith('UC') and len(ext_id) > 20:
                         user_info['user_id'] = ext_id
                         break
             
-            # Extract display name/title
-            titles = self._search_dict(data, 'title')
-            for title in titles:
-                if isinstance(title, str) and title and len(title) > 0 and len(title) < 100:
-                    user_info['display_name'] = title
-                    break
-            
-            # Extract profile picture
-            avatars = self._search_dict(data, 'avatar')
-            for avatar in avatars:
-                if isinstance(avatar, dict) and 'thumbnails' in avatar:
-                    thumbnails = avatar['thumbnails']
-                    if thumbnails and len(thumbnails) > 0:
-                        # Get highest resolution thumbnail
-                        user_info['profile_pic_url'] = thumbnails[-1].get('url', '')
+            # Extract display name/title - look for channel metadata
+            # Try to find the channel name from header
+            headers_data = self._search_dict(data, 'header')
+            for header in headers_data:
+                if isinstance(header, dict):
+                    # Look for c4TabbedHeaderRenderer or pageHeaderRenderer
+                    for renderer_key in ['c4TabbedHeaderRenderer', 'pageHeaderRenderer', 'carouselHeaderRenderer']:
+                        if renderer_key in header:
+                            renderer = header[renderer_key]
+                            # Try to get title
+                            if 'title' in renderer:
+                                title = renderer['title']
+                                if isinstance(title, str):
+                                    user_info['display_name'] = title
+                                elif isinstance(title, dict) and 'simpleText' in title:
+                                    user_info['display_name'] = title['simpleText']
+                            # Try to get avatar/thumbnail
+                            if 'avatar' in renderer and 'thumbnails' in renderer['avatar']:
+                                thumbnails = renderer['avatar']['thumbnails']
+                                if thumbnails and len(thumbnails) > 0:
+                                    user_info['profile_pic_url'] = thumbnails[-1].get('url', '')
+                            break
+                    if 'display_name' in user_info:
                         break
+            
+            # Fallback: Extract from metadata
+            if 'display_name' not in user_info:
+                metadata_list = self._search_dict(data, 'metadata')
+                for metadata in metadata_list:
+                    if isinstance(metadata, dict) and 'channelMetadataRenderer' in metadata:
+                        renderer = metadata['channelMetadataRenderer']
+                        if 'title' in renderer:
+                            user_info['display_name'] = renderer['title']
+                        if 'avatar' in renderer and 'thumbnails' in renderer['avatar']:
+                            thumbnails = renderer['avatar']['thumbnails']
+                            if thumbnails:
+                                user_info['profile_pic_url'] = thumbnails[-1].get('url', '')
+                        break
+            
+            # Last resort: look for any title field
+            if 'display_name' not in user_info:
+                titles = self._search_dict(data, 'title')
+                for title in titles:
+                    if isinstance(title, str) and title and 3 < len(title) < 100:
+                        user_info['display_name'] = title
+                        break
+                    elif isinstance(title, dict) and 'simpleText' in title:
+                        text = title['simpleText']
+                        if text and 3 < len(text) < 100:
+                            user_info['display_name'] = text
+                            break
             
             # Validate we have the minimum required info
             if 'user_id' not in user_info or 'display_name' not in user_info:
@@ -321,7 +382,8 @@ class UserDatabase:
             
             return user_info
             
-        except (requests.RequestException, json.JSONDecodeError, ValueError, KeyError):
+        except (requests.RequestException, json.JSONDecodeError, ValueError, KeyError) as e:
+            # Return None on any error
             return None
     
     def _search_dict(self, data, key):
