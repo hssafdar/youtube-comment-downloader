@@ -308,12 +308,8 @@ class UserDatabaseDialog:
                     post_content = post.get('content', 'No content')
                     post_date = post.get('published_time', '')
                     
-                    # Create filename with date
-                    try:
-                        # Try to parse relative date
-                        date_str = datetime.now().strftime('%Y-%m-%d')
-                    except Exception:
-                        date_str = datetime.now().strftime('%Y-%m-%d')
+                    # Use current date for filename (post dates are relative like "2 days ago")
+                    date_str = datetime.now().strftime('%Y-%m-%d')
                     
                     # Truncate title
                     title_preview = post_content[:50].replace('\n', ' ') if post_content else 'Post'
@@ -959,14 +955,11 @@ class YouTubeCommentDownloaderGUI:
             if not metadata:
                 raise Exception("Could not extract video metadata")
             
-            content_title = metadata.get('title', f'Unknown {content_type.title()}')
+            content_title = metadata.get('title', 'Unknown Video')
             channel_name = metadata.get('channel_name', 'Unknown Creator')
             channel_id = metadata.get('channel_id', '')
             
-            if is_post:
-                self._log_status(f"Post: {content_title}")
-            else:
-                self._log_status(f"Video: {content_title}")
+            self._log_status(f"Video: {content_title}")
             self._log_status(f"Channel: {channel_name}")
             
             # Auto-add content author to database
