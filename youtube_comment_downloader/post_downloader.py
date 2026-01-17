@@ -173,7 +173,13 @@ class YoutubePostDownloader(YoutubeCommentDownloader):
             yield comment
     
     def _get_comments_from_endpoint(self, endpoint, ytcfg):
-        """Internal method to get comments from an endpoint"""
+        """
+        Internal method to get comments from an endpoint
+        
+        Note: This uses recursion to handle continuation tokens.
+        YouTube's comment continuation depth is typically limited,
+        so stack overflow is unlikely in practice.
+        """
         response = self.ajax_request(endpoint, ytcfg)
         
         if not response:
@@ -277,6 +283,17 @@ class YoutubePostDownloader(YoutubeCommentDownloader):
         local_paths = []
         for i, img_url in enumerate(images):
             try:
+                # Validate URL is from YouTube's domains
+                if not img_url or not isinstance(img_url, str):
+                    continue
+                
+                # Basic URL validation - ensure it's from trusted YouTube/Google domains
+                from urllib.parse import urlparse
+                parsed = urlparse(img_url)
+                allowed_domains = ['ytimg.com', 'ggpht.com', 'googleusercontent.com', 'youtube.com']
+                if not any(domain in parsed.netloc for domain in allowed_domains):
+                    continue
+                
                 response = requests.get(img_url, timeout=30)
                 response.raise_for_status()
                 

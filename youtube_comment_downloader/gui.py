@@ -27,6 +27,9 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
+# Constants
+DEFAULT_COMMENT_LIMIT = 1000  # Default limit for comment downloads
+
 
 class UserDatabaseDialog:
     """Dialog for managing users in the database"""
@@ -405,7 +408,7 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="Limit (optional):").grid(row=row, column=0, sticky=tk.W, pady=5)
         self.limit_entry = ttk.Entry(main_frame, width=20)
         self.limit_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
-        self.limit_entry.insert(0, "1000")  # Default to 1000 comments
+        self.limit_entry.insert(0, str(DEFAULT_COMMENT_LIMIT))  # Default limit
         ttk.Label(main_frame, text="(number of comments)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         
@@ -1000,7 +1003,12 @@ def main():
         import platform
         if platform.system() == 'Darwin':
             try:
-                from Foundation import NSBundle
+                # Try different pyobjc imports
+                try:
+                    from Foundation import NSBundle
+                except ImportError:
+                    from AppKit import NSBundle
+                
                 bundle = NSBundle.mainBundle()
                 if bundle:
                     info = bundle.localizedInfoDictionary() or bundle.infoDictionary()
