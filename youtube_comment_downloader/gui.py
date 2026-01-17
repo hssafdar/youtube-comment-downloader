@@ -29,6 +29,10 @@ def to_json(comment, indent=None):
 
 
 class YouTubeCommentDownloaderGUI:
+    # Constants
+    URL_VALIDATION_DEBOUNCE_MS = 500  # Delay before validating URL
+    URL_VALIDATION_TIMEOUT_SEC = 10   # Timeout for URL validation requests
+    
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube Comment Downloader")
@@ -105,7 +109,7 @@ class YouTubeCommentDownloaderGUI:
         self.filter_user_entry = ttk.Entry(main_frame, width=20)
         self.filter_user_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
         self.filter_user_entry.insert(0, "")
-        ttk.Label(main_frame, text="(display name, not @handle)").grid(row=row, column=2, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="(user's display name)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         
         # Pretty output
@@ -207,6 +211,13 @@ class YouTubeCommentDownloaderGUI:
         """
         Extract YouTube video ID from URL or return the ID itself
         
+        Supports various YouTube URL formats:
+        - Standard: youtube.com/watch?v=VIDEO_ID
+        - Short: youtu.be/VIDEO_ID
+        - Embed: youtube.com/embed/VIDEO_ID
+        - Shorts: youtube.com/shorts/VIDEO_ID
+        - With parameters: youtube.com/watch?v=VIDEO_ID&t=123s
+        
         Args:
             url_or_id: YouTube URL or video ID
             
@@ -216,12 +227,20 @@ class YouTubeCommentDownloaderGUI:
         url_or_id = url_or_id.strip()
         
         # Try to extract from various YouTube URL formats first
-        patterns = [
-            r'(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})',
-            r'youtube\.com\/.*[?&]v=([a-zA-Z0-9_-]{11})',
-        ]
+        # Pattern 1: Matches direct video paths (watch, shorts, embed, etc.)
+        direct_path_pattern = (
+            r'(?:youtube\.com\/watch\?v=|'  # Standard watch URL
+            r'youtu\.be\/|'                  # Short URL
+            r'youtube\.com\/embed\/|'        # Embed URL
+            r'youtube\.com\/v\/|'            # Legacy v URL
+            r'youtube\.com\/shorts\/)'       # Shorts URL
+            r'([a-zA-Z0-9_-]{11})'          # Video ID (11 chars)
+        )
         
-        for pattern in patterns:
+        # Pattern 2: Matches v parameter in any YouTube URL
+        v_param_pattern = r'youtube\.com\/.*[?&]v=([a-zA-Z0-9_-]{11})'
+        
+        for pattern in [direct_path_pattern, v_param_pattern]:
             match = re.search(pattern, url_or_id)
             if match:
                 return match.group(1)
@@ -238,8 +257,10 @@ class YouTubeCommentDownloaderGUI:
         if self.url_validation_timer:
             self.root.after_cancel(self.url_validation_timer)
         
-        # Schedule new validation after 500ms
-        self.url_validation_timer = self.root.after(500, self._validate_url)
+        # Schedule new validation after configured delay
+        self.url_validation_timer = self.root.after(
+            self.URL_VALIDATION_DEBOUNCE_MS, self._validate_url
+        )
     
     def _validate_url(self):
         """Validate the URL and check for comments (runs after debounce)"""
@@ -280,13 +301,16 @@ class YouTubeCommentDownloaderGUI:
             url = f"https://www.youtube.com/watch?v={video_id}"
             
             try:
-                response = downloader.session.get(url, timeout=10)
+                response = downloader.session.get(
+                    url, timeout=self.URL_VALIDATION_TIMEOUT_SEC
+                )
                 if response.status_code != 200:
                     self.root.after(0, self.url_status_label.config,
                                   {"text": "✗ Video not found", "foreground": "red"})
                     return
                 
-                # Check if comments are available by looking for comment section in HTML
+                # Check if comments are available
+                # Note: This is a heuristic check that may need updates if YouTube changes their HTML
                 html_content = response.text
                 if 'commentsDisabled' in html_content or '"commentCount":0' in html_content:
                     self.root.after(0, self.url_status_label.config,
