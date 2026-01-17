@@ -18,6 +18,9 @@ from .json_export import generate_json_output
 from .txt_export import generate_txt_output
 from .pdf_export import generate_pdf_output
 from .user_database import UserDatabase
+from .queue_manager import QueueManager, QueueItemStatus
+from .playlist_parser import PlaylistParser
+from .date_filter import DateFilter
 
 # Constants
 DEFAULT_COMMENT_LIMIT = 1000  # Default limit for comment downloads
@@ -301,8 +304,8 @@ class YouTubeCommentDownloaderGUI:
         self.root.title("YouTube Comment Downloader")
         
         # Set window size and center on screen
-        window_width = 700
-        window_height = 650
+        window_width = 900
+        window_height = 750
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -312,12 +315,30 @@ class YouTubeCommentDownloaderGUI:
         self.download_thread = None
         self.is_downloading = False
         self.cancel_requested = False
+        self.stop_requested = False
+        self.is_processing_queue = False
         
         # Initialize config and database
         self.config = Config()
         self.user_db = UserDatabase()
+        self.queue_manager = QueueManager()
+        self.playlist_parser = PlaylistParser()
+        
+        # Check for saved queue on startup
+        self._check_saved_queue()
         
         self._create_widgets()
+    
+    def _check_saved_queue(self):
+        """Check if saved queue exists and offer to resume"""
+        if self.queue_manager.load_state() and self.queue_manager.has_pending_items():
+            response = messagebox.askyesno(
+                "Resume Queue?",
+                "A previous queue with pending items was found.\nDo you want to resume it?",
+                icon=messagebox.QUESTION
+            )
+            if not response:
+                self.queue_manager.clear_queue()
     
     def _create_widgets(self):
         """Create all GUI widgets"""
@@ -355,6 +376,16 @@ class YouTubeCommentDownloaderGUI:
         self.language_entry = ttk.Entry(main_frame, width=20)
         self.language_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
         ttk.Label(main_frame, text="(e.g., en)").grid(row=row, column=2, sticky=tk.W, pady=5)
+        row += 1
+        
+        # Date range filter
+        ttk.Label(main_frame, text="Date Range:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        self.date_filter_var = tk.StringVar(value="All Comments")
+        date_combo = ttk.Combobox(main_frame, textvariable=self.date_filter_var,
+                                  values=["All Comments", "Past 24 Hours", "Past Week", "Past Month", "Past Year", "Custom Range..."],
+                                  state="readonly", width=18)
+        date_combo.grid(row=row, column=1, sticky=tk.W, pady=5)
+        date_combo.bind('<<ComboboxSelected>>', self._on_date_filter_selected)
         row += 1
         
         # Limit
@@ -405,6 +436,23 @@ class YouTubeCommentDownloaderGUI:
         self.browse_button.grid(row=row, column=2, sticky=tk.W, pady=5, padx=(5, 0))
         row += 1
         
+        # Queue display section
+        ttk.Label(main_frame, text="Queue:").grid(row=row, column=0, sticky=(tk.W, tk.N), pady=5)
+        
+        # Create frame for queue listbox and scrollbar
+        queue_frame = ttk.Frame(main_frame)
+        queue_frame.grid(row=row, column=1, columnspan=2, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
+        main_frame.rowconfigure(row, weight=1)
+        
+        # Queue listbox with scrollbar
+        queue_scrollbar = ttk.Scrollbar(queue_frame, orient=tk.VERTICAL)
+        self.queue_listbox = tk.Listbox(queue_frame, height=6, yscrollcommand=queue_scrollbar.set)
+        queue_scrollbar.config(command=self.queue_listbox.yview)
+        
+        self.queue_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        queue_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        row += 1
+        
         # Progress bar
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var, 
@@ -416,11 +464,23 @@ class YouTubeCommentDownloaderGUI:
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=row, column=0, columnspan=3, pady=10)
         
-        self.download_button = ttk.Button(button_frame, text="Download", command=self._start_download)
+        self.add_button = ttk.Button(button_frame, text="Add to Queue", command=self._add_to_queue)
+        self.add_button.pack(side=tk.LEFT, padx=5)
+        
+        self.download_button = ttk.Button(button_frame, text="Download (Single)", command=self._start_download)
         self.download_button.pack(side=tk.LEFT, padx=5)
         
-        self.stop_button = ttk.Button(button_frame, text="Cancel", command=self._cancel_download, state=tk.DISABLED)
+        self.start_queue_button = ttk.Button(button_frame, text="Start Queue", command=self._start_queue_processing)
+        self.start_queue_button.pack(side=tk.LEFT, padx=5)
+        
+        self.pause_button = ttk.Button(button_frame, text="Pause", command=self._pause_queue, state=tk.DISABLED)
+        self.pause_button.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_button = ttk.Button(button_frame, text="Stop", command=self._stop_queue, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=5)
+        
+        self.clear_queue_button = ttk.Button(button_frame, text="Clear Queue", command=self._clear_queue)
+        self.clear_queue_button.pack(side=tk.LEFT, padx=5)
         
         self.close_button = ttk.Button(button_frame, text="Close", command=self._close_window)
         self.close_button.pack(side=tk.LEFT, padx=5)
@@ -449,6 +509,13 @@ class YouTubeCommentDownloaderGUI:
         
         # Store selected user info
         self.selected_user = None
+        
+        # Store date filter settings
+        self.date_filter_after = None
+        self.date_filter_before = None
+        
+        # Refresh queue display
+        self._refresh_queue_display()
     
     def _update_filter_dropdown(self):
         """Update the filter dropdown with users from database"""
@@ -639,8 +706,8 @@ class YouTubeCommentDownloaderGUI:
         return True
     
     def _start_download(self):
-        """Start the download process in a background thread"""
-        if self.is_downloading:
+        """Start the download process in a background thread (single video mode)"""
+        if self.is_downloading or self.is_processing_queue:
             messagebox.showwarning("Download in Progress", "A download is already in progress")
             return
         
@@ -650,8 +717,10 @@ class YouTubeCommentDownloaderGUI:
         # Reset cancel flag
         self.cancel_requested = False
         
-        # Disable download button, enable cancel button
+        # Disable buttons, enable stop
         self.download_button.config(state=tk.DISABLED)
+        self.add_button.config(state=tk.DISABLED)
+        self.start_queue_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self.is_downloading = True
         
@@ -665,13 +734,15 @@ class YouTubeCommentDownloaderGUI:
     
     def _cancel_download(self):
         """Cancel the current download"""
-        if not self.is_downloading:
+        if not self.is_downloading and not self.is_processing_queue:
             return
         
         self.cancel_requested = True
         self._log_status("")
         self._log_status("Cancelling download...")
-        self.stop_button.config(state=tk.DISABLED)
+        
+        if hasattr(self, 'stop_button'):
+            self.stop_button.config(state=tk.DISABLED)
     
     def _download_comments(self):
         """Download comments (runs in background thread)"""
@@ -903,16 +974,470 @@ class YouTubeCommentDownloaderGUI:
             self.root.after(0, messagebox.showerror, "Download Error", error_msg)
         
         finally:
-            # Re-enable download button and disable cancel button
+            # Re-enable buttons
             self.root.after(0, self.download_button.config, {"state": tk.NORMAL})
+            self.root.after(0, self.add_button.config, {"state": tk.NORMAL})
+            self.root.after(0, self.start_queue_button.config, {"state": tk.NORMAL})
             self.root.after(0, self.stop_button.config, {"state": tk.DISABLED})
             self.root.after(0, self.progress_var.set, 0)
             self.is_downloading = False
             self.cancel_requested = False
     
+    def _on_date_filter_selected(self, event=None):
+        """Handle date filter dropdown selection"""
+        selected = self.date_filter_var.get()
+        if selected == "Custom Range...":
+            self._show_custom_date_dialog()
+    
+    def _show_custom_date_dialog(self):
+        """Show dialog for custom date range input"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Custom Date Range")
+        dialog.geometry("400x200")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        frame = ttk.Frame(dialog, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        ttk.Label(frame, text="Enter date range (YYYY-MM-DD format):").pack(anchor=tk.W, pady=(0, 10))
+        
+        # Start date
+        ttk.Label(frame, text="After Date (optional):").pack(anchor=tk.W)
+        after_entry = ttk.Entry(frame, width=30)
+        after_entry.pack(fill=tk.X, pady=(0, 10))
+        
+        # End date
+        ttk.Label(frame, text="Before Date (optional):").pack(anchor=tk.W)
+        before_entry = ttk.Entry(frame, width=30)
+        before_entry.pack(fill=tk.X, pady=(0, 10))
+        
+        def apply_custom():
+            after_text = after_entry.get().strip()
+            before_text = before_entry.get().strip()
+            
+            try:
+                from datetime import datetime
+                self.date_filter_after = datetime.fromisoformat(after_text) if after_text else None
+                self.date_filter_before = datetime.fromisoformat(before_text) if before_text else None
+                dialog.destroy()
+            except ValueError:
+                messagebox.showerror("Invalid Date", "Please use YYYY-MM-DD format", parent=dialog)
+        
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack(pady=10)
+        
+        ttk.Button(btn_frame, text="Cancel", command=lambda: (self.date_filter_var.set("All Comments"), dialog.destroy())).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Apply", command=apply_custom).pack(side=tk.LEFT, padx=5)
+    
+    def _refresh_queue_display(self):
+        """Refresh the queue display listbox"""
+        self.queue_listbox.delete(0, tk.END)
+        
+        status_icons = {
+            QueueItemStatus.PENDING: "📋",
+            QueueItemStatus.DOWNLOADING: "⏳",
+            QueueItemStatus.COMPLETE: "✅",
+            QueueItemStatus.SKIPPED: "⏭️",
+            QueueItemStatus.ERROR: "❌",
+            QueueItemStatus.PAUSED: "⏸️"
+        }
+        
+        for item in self.queue_manager.queue:
+            icon = status_icons.get(item.status, "❓")
+            comment_info = f"({item.comments_downloaded} comments)" if item.comments_downloaded > 0 else ""
+            display_text = f"{icon} {item.title} {comment_info}"
+            self.queue_listbox.insert(tk.END, display_text)
+    
+    def _add_to_queue(self):
+        """Add URL(s) to queue (supports single videos and playlists)"""
+        url_or_id = self.url_entry.get().strip()
+        
+        if not url_or_id:
+            messagebox.showerror("Input Error", "Please enter a YouTube URL or ID")
+            return
+        
+        # Check if it's a playlist
+        if self.playlist_parser.is_playlist_url(url_or_id):
+            self._add_playlist_to_queue(url_or_id)
+        else:
+            self._add_single_to_queue(url_or_id)
+    
+    def _add_single_to_queue(self, url_or_id):
+        """Add a single video to queue"""
+        video_id = self._extract_video_id(url_or_id)
+        
+        if not video_id:
+            messagebox.showerror("Input Error", "Invalid YouTube URL or video ID")
+            return
+        
+        video_url = f"https://www.youtube.com/watch?v={video_id}"
+        
+        if self.queue_manager.add_item(video_id, video_url):
+            self._log_status(f"Added to queue: {video_id}")
+            self._refresh_queue_display()
+            
+            # Fetch title in background
+            threading.Thread(target=self._fetch_and_update_title, args=(video_id,), daemon=True).start()
+        else:
+            messagebox.showinfo("Duplicate", "This video is already in the queue")
+    
+    def _add_playlist_to_queue(self, playlist_url):
+        """Add all videos from a playlist to queue"""
+        self._log_status("Fetching playlist videos...")
+        
+        def fetch_playlist():
+            try:
+                playlist_id = self.playlist_parser.extract_playlist_id(playlist_url)
+                if not playlist_id:
+                    self.root.after(0, messagebox.showerror, "Error", "Could not extract playlist ID")
+                    return
+                
+                videos = self.playlist_parser.get_playlist_videos(playlist_id)
+                
+                if not videos:
+                    self.root.after(0, messagebox.showwarning, "No Videos", "No videos found in playlist")
+                    return
+                
+                added_count = 0
+                for video in videos:
+                    if self.queue_manager.add_item(video['video_id'], video['url'], video['title']):
+                        added_count += 1
+                
+                self.root.after(0, self._refresh_queue_display)
+                self.root.after(0, self._log_status, f"Added {added_count} video(s) from playlist")
+                
+            except Exception as e:
+                self.root.after(0, messagebox.showerror, "Error", f"Failed to fetch playlist: {str(e)}")
+        
+        threading.Thread(target=fetch_playlist, daemon=True).start()
+    
+    def _fetch_and_update_title(self, video_id):
+        """Fetch video title and update queue item"""
+        try:
+            downloader = YoutubeCommentDownloader()
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            metadata = downloader.get_video_metadata(url)
+            
+            if metadata and 'title' in metadata:
+                # Find and update the queue item
+                for item in self.queue_manager.queue:
+                    if item.video_id == video_id:
+                        item.title = metadata['title']
+                        item.total_comments = metadata.get('comment_count', 0)
+                        self.queue_manager.save_state()
+                        self.root.after(0, self._refresh_queue_display)
+                        break
+        except Exception:
+            pass
+    
+    def _clear_queue(self):
+        """Clear all items from queue"""
+        if not self.queue_manager.queue:
+            return
+        
+        if messagebox.askyesno("Clear Queue", "Are you sure you want to clear the entire queue?"):
+            self.queue_manager.clear_queue()
+            self._refresh_queue_display()
+            self._log_status("Queue cleared")
+    
+    def _start_queue_processing(self):
+        """Start processing the queue"""
+        if not self.queue_manager.queue:
+            messagebox.showinfo("Empty Queue", "The queue is empty. Add some videos first.")
+            return
+        
+        if self.is_processing_queue:
+            messagebox.showwarning("Queue Processing", "Queue is already being processed")
+            return
+        
+        # Validate export folder
+        export_folder = self.folder_entry.get().strip()
+        if not export_folder or not os.path.isdir(export_folder):
+            messagebox.showerror("Input Error", "Please specify a valid export folder")
+            return
+        
+        self.is_processing_queue = True
+        self.stop_requested = False
+        self.queue_manager.is_paused = False
+        
+        # Update button states
+        self.start_queue_button.config(state=tk.DISABLED)
+        self.pause_button.config(state=tk.NORMAL)
+        self.stop_button.config(state=tk.NORMAL)
+        self.add_button.config(state=tk.DISABLED)
+        self.download_button.config(state=tk.DISABLED)
+        
+        # Start queue processing thread
+        threading.Thread(target=self._process_queue, daemon=True).start()
+    
+    def _pause_queue(self):
+        """Pause queue processing after current video"""
+        if not self.is_processing_queue:
+            return
+        
+        self.queue_manager.is_paused = True
+        self._log_status("Queue will pause after current video...")
+        self.pause_button.config(state=tk.DISABLED)
+    
+    def _stop_queue(self):
+        """Stop queue processing immediately"""
+        if not self.is_processing_queue:
+            return
+        
+        self.stop_requested = True
+        self.cancel_requested = True
+        self._log_status("Stopping queue...")
+        self.stop_button.config(state=tk.DISABLED)
+    
+    def _process_queue(self):
+        """Process all pending items in queue"""
+        try:
+            while True:
+                if self.stop_requested:
+                    self._log_status("Queue processing stopped")
+                    break
+                
+                if self.queue_manager.is_paused:
+                    self._log_status("Queue processing paused")
+                    break
+                
+                # Get next pending item
+                next_item = self.queue_manager.get_next_pending()
+                if not next_item:
+                    self._log_status("Queue processing complete!")
+                    break
+                
+                # Check if file already exists (skip detection)
+                export_folder = self.folder_entry.get().strip()
+                if self._check_already_downloaded(next_item.video_id, export_folder):
+                    next_item.status = QueueItemStatus.SKIPPED
+                    self.queue_manager.save_state()
+                    self.root.after(0, self._refresh_queue_display)
+                    self._log_status(f"Skipped (already downloaded): {next_item.title}")
+                    continue
+                
+                # Process this item
+                self._log_status("")
+                self._log_status(f"Processing: {next_item.title}")
+                next_item.status = QueueItemStatus.DOWNLOADING
+                self.queue_manager.save_state()
+                self.root.after(0, self._refresh_queue_display)
+                
+                # Download comments for this item
+                success = self._download_queue_item(next_item)
+                
+                if self.stop_requested:
+                    next_item.status = QueueItemStatus.PAUSED
+                    self.queue_manager.save_state()
+                    break
+                
+                if success:
+                    next_item.status = QueueItemStatus.COMPLETE
+                else:
+                    next_item.status = QueueItemStatus.ERROR
+                
+                self.queue_manager.save_state()
+                self.root.after(0, self._refresh_queue_display)
+        
+        finally:
+            self.is_processing_queue = False
+            self.stop_requested = False
+            self.cancel_requested = False
+            
+            # Reset button states
+            self.root.after(0, self.start_queue_button.config, {"state": tk.NORMAL})
+            self.root.after(0, self.pause_button.config, {"state": tk.DISABLED})
+            self.root.after(0, self.stop_button.config, {"state": tk.DISABLED})
+            self.root.after(0, self.add_button.config, {"state": tk.NORMAL})
+            self.root.after(0, self.download_button.config, {"state": tk.NORMAL})
+            self.root.after(0, self.progress_var.set, 0)
+    
+    def _check_already_downloaded(self, video_id, export_folder):
+        """Check if a video has already been downloaded"""
+        try:
+            # Check all subdirectories for files containing the video ID
+            for root, dirs, files in os.walk(export_folder):
+                for file in files:
+                    if video_id in file:
+                        return True
+        except Exception:
+            pass
+        return False
+    
+    def _download_queue_item(self, queue_item):
+        """Download comments for a queue item"""
+        try:
+            # Get settings
+            export_folder = self.folder_entry.get().strip()
+            sort_display = self.sort_display_var.get()
+            sort_by = self.sort_options[sort_display]
+            language = self.language_entry.get().strip() or None
+            limit_text = self.limit_entry.get().strip()
+            limit = int(limit_text) if limit_text else None
+            export_format = self.export_format_var.get()
+            include_raw_txt = self.include_raw_txt_var.get()
+            filter_user_display = self.filter_user_var.get()
+            
+            # Determine filter mode
+            filter_mode = None
+            filter_user_id = None
+            filter_user_name = None
+            
+            if filter_user_display == "Video Author":
+                filter_mode = "video_author"
+            elif filter_user_display != "None" and filter_user_display in self.filter_user_map:
+                filter_mode = "database_user"
+                user = self.filter_user_map[filter_user_display]
+                filter_user_id = user['user_id']
+                filter_user_name = user['display_name']
+            
+            # Create downloader
+            downloader = YoutubeCommentDownloader()
+            
+            # Get video metadata
+            metadata = downloader.get_video_metadata(queue_item.video_url)
+            
+            if not metadata:
+                raise Exception("Could not extract video metadata")
+            
+            content_title = metadata.get('title', 'Unknown Video')
+            channel_name = metadata.get('channel_name', 'Unknown Creator')
+            channel_id = metadata.get('channel_id', '')
+            
+            # Auto-add content author to database
+            if channel_id and channel_name:
+                channel_thumbnail = metadata.get('channel_thumbnail', '')
+                self.user_db.add_user(
+                    user_id=channel_id,
+                    username=channel_name,
+                    display_name=channel_name,
+                    profile_pic_url=channel_thumbnail,
+                    channel_url=f"https://www.youtube.com/channel/{channel_id}"
+                )
+            
+            # Set filter user if filtering by content author
+            if filter_mode == "video_author":
+                filter_user_id = channel_id
+                filter_user_name = channel_name
+            
+            # Get comment generator
+            generator = downloader.get_comments(queue_item.video_id, sort_by, language)
+            
+            # Download comments
+            all_comments = []
+            count = 0
+            
+            for comment in generator:
+                if self.cancel_requested or self.stop_requested:
+                    return False
+                
+                all_comments.append(comment)
+                count += 1
+                if limit and count >= limit:
+                    break
+                
+                if count % 10 == 0:
+                    queue_item.comments_downloaded = count
+                    self.queue_manager.save_state()
+            
+            queue_item.comments_downloaded = count
+            self.queue_manager.save_state()
+            
+            if self.cancel_requested or self.stop_requested:
+                return False
+            
+            # Apply filter if specified
+            filtered_comments = all_comments
+            is_filtered = False
+            
+            if filter_user_id:
+                filtered_comments = self._filter_comments_by_user(all_comments, filter_user_id)
+                is_filtered = True
+            
+            # Apply date filter
+            date_filter_preset = self.date_filter_var.get()
+            if date_filter_preset != "All Comments":
+                date_filter = self._create_date_filter()
+                filtered_comments = date_filter.filter_comments(filtered_comments)
+            
+            if len(filtered_comments) == 0:
+                self.root.after(0, self._log_status, "No comments available!")
+                return False
+            
+            # Map export format
+            format_map = {
+                "Dark HTML": "html",
+                "JSON": "json",
+                "PDF": "pdf"
+            }
+            file_extension = format_map.get(export_format, "html")
+            
+            # Create export path
+            output_path, output_folder = create_export_path(
+                base_folder=export_folder,
+                creator_name=channel_name,
+                video_title=content_title,
+                export_format=file_extension,
+                is_filtered=is_filtered
+            )
+            
+            self._log_status(f"Saving to: {output_path}")
+            
+            # Write output
+            filter_label = filter_user_name if is_filtered else None
+            
+            if export_format == "Dark HTML":
+                generate_html_output(filtered_comments, output_path, filter_label)
+            elif export_format == "JSON":
+                generate_json_output(filtered_comments, output_path, filter_label)
+            elif export_format == "PDF":
+                try:
+                    generate_pdf_output(filtered_comments, output_path, filter_label)
+                except ImportError as e:
+                    self.root.after(0, self._log_status, f"PDF export error: {str(e)}")
+                    return False
+            
+            # Include raw TXT if enabled
+            if include_raw_txt:
+                raw_folder = os.path.join(output_folder, 'Raw')
+                os.makedirs(raw_folder, exist_ok=True)
+                
+                safe_title = os.path.basename(output_path).rsplit('.', 1)[0]
+                txt_filename = f"{safe_title}.txt"
+                txt_path = os.path.join(raw_folder, txt_filename)
+                
+                generate_txt_output(filtered_comments, txt_path, filter_label)
+            
+            self._log_status(f"✅ Completed: {content_title} ({len(filtered_comments)} comments)")
+            return True
+            
+        except Exception as e:
+            queue_item.error_message = str(e)
+            self.root.after(0, self._log_status, f"❌ Error: {str(e)}")
+            return False
+    
+    def _create_date_filter(self):
+        """Create a DateFilter object based on current settings"""
+        preset_map = {
+            "All Comments": "all",
+            "Past 24 Hours": "day",
+            "Past Week": "week",
+            "Past Month": "month",
+            "Past Year": "year",
+            "Custom Range...": "custom"
+        }
+        
+        preset = preset_map.get(self.date_filter_var.get(), "all")
+        
+        if preset == "custom":
+            return DateFilter(preset='custom', after_date=self.date_filter_after, before_date=self.date_filter_before)
+        else:
+            return DateFilter(preset=preset)
+    
     def _close_window(self):
         """Close the window"""
-        if self.is_downloading:
+        if self.is_downloading or self.is_processing_queue:
             if not messagebox.askyesno("Download in Progress", 
                                       "A download is in progress. Are you sure you want to exit?"):
                 return
