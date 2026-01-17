@@ -16,7 +16,16 @@ from .file_utils import create_export_path, open_folder
 from .html_export import generate_html_output
 from .json_export import generate_json_output
 from .txt_export import generate_txt_output
+from .pdf_export import generate_pdf_output
 from .user_database import UserDatabase
+
+try:
+    from PIL import Image, ImageTk, ImageDraw
+    import io
+    import requests as img_requests
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 
 class UserDatabaseDialog:
@@ -25,10 +34,11 @@ class UserDatabaseDialog:
     def __init__(self, parent, user_db):
         self.user_db = user_db
         self.result = None
+        self.photo_cache = {}
         
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("User Database Manager")
-        self.dialog.geometry("600x400")
+        self.dialog.geometry("700x500")
         self.dialog.transient(parent)
         self.dialog.grab_set()
         
@@ -43,14 +53,16 @@ class UserDatabaseDialog:
         # Instructions
         ttk.Label(main_frame, text="Manage users for filtering:").pack(anchor=tk.W, pady=(0, 10))
         
-        # Listbox with scrollbar
+        # Listbox with scrollbar and larger items
         list_frame = ttk.Frame(main_frame)
         list_frame.pack(fill=tk.BOTH, expand=True)
         
         scrollbar = ttk.Scrollbar(list_frame)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.user_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set)
+        # Use larger font for list items
+        self.user_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, 
+                                       font=('TkDefaultFont', 10), height=15)
         self.user_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.config(command=self.user_listbox.yview)
         
@@ -60,6 +72,7 @@ class UserDatabaseDialog:
         button_frame = ttk.Frame(main_frame)
         button_frame.pack(pady=(10, 0))
         
+        ttk.Button(button_frame, text="Add User...", command=self._add_user_dialog).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Select", command=self._select_user).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Delete", command=self._delete_user).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Close", command=self.dialog.destroy).pack(side=tk.LEFT, padx=5)
@@ -74,8 +87,90 @@ class UserDatabaseDialog:
             self.user_listbox.insert(tk.END, "(No users in database)")
         else:
             for user in users:
-                display = f"{user['display_name']} (@{user['username']})"
+                # Show profile picture icon and user info
+                profile_indicator = "👤"  # Default avatar emoji
+                display = f"  {profile_indicator}  {user['display_name']} (@{user['username']})"
                 self.user_listbox.insert(tk.END, display)
+    
+    def _add_user_dialog(self):
+        """Show dialog to add user by URL"""
+        add_dialog = tk.Toplevel(self.dialog)
+        add_dialog.title("Add User")
+        add_dialog.geometry("500x180")
+        add_dialog.transient(self.dialog)
+        add_dialog.grab_set()
+        
+        # Center the dialog
+        add_dialog.update_idletasks()
+        x = (add_dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (add_dialog.winfo_screenheight() // 2) - (180 // 2)
+        add_dialog.geometry(f"500x180+{x}+{y}")
+        
+        frame = ttk.Frame(add_dialog, padding="20")
+        frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Instructions
+        ttk.Label(frame, text="Enter YouTube channel URL:").pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(frame, text="(e.g., youtube.com/@username or youtube.com/channel/UC...)", 
+                 font=('TkDefaultFont', 8)).pack(anchor=tk.W, pady=(0, 10))
+        
+        # URL entry
+        url_entry = ttk.Entry(frame, width=60)
+        url_entry.pack(fill=tk.X, pady=(0, 10))
+        url_entry.focus()
+        
+        # Status label
+        status_label = ttk.Label(frame, text="", foreground="blue")
+        status_label.pack(pady=(5, 10))
+        
+        def do_add():
+            url = url_entry.get().strip()
+            if not url:
+                messagebox.showerror("Error", "Please enter a URL", parent=add_dialog)
+                return
+            
+            status_label.config(text="Fetching user info...", foreground="blue")
+            add_dialog.update()
+            
+            # Fetch user info in a thread to avoid blocking UI
+            def fetch_and_add():
+                user_info = self.user_db.fetch_user_from_url(url)
+                
+                if user_info:
+                    # Add to database
+                    success = self.user_db.add_user(
+                        user_id=user_info['user_id'],
+                        username=user_info.get('username', user_info['display_name']),
+                        display_name=user_info['display_name'],
+                        profile_pic_url=user_info.get('profile_pic_url'),
+                        channel_url=user_info.get('channel_url')
+                    )
+                    
+                    if success:
+                        add_dialog.after(0, lambda: status_label.config(
+                            text=f"✓ Added: {user_info['display_name']}", foreground="green"))
+                        add_dialog.after(1000, add_dialog.destroy)
+                        add_dialog.after(1000, self._refresh_list)
+                    else:
+                        add_dialog.after(0, lambda: status_label.config(
+                            text="Error: Could not add user to database", foreground="red"))
+                else:
+                    add_dialog.after(0, lambda: status_label.config(
+                        text="Error: Could not fetch user info from URL", foreground="red"))
+            
+            import threading
+            thread = threading.Thread(target=fetch_and_add, daemon=True)
+            thread.start()
+        
+        # Buttons
+        btn_frame = ttk.Frame(frame)
+        btn_frame.pack()
+        
+        ttk.Button(btn_frame, text="Cancel", command=add_dialog.destroy).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Add", command=do_add).pack(side=tk.LEFT, padx=5)
+        
+        # Bind Enter key
+        url_entry.bind('<Return>', lambda e: do_add())
     
     def _select_user(self):
         """Select a user from the list"""
@@ -172,9 +267,15 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="Export Format:").grid(row=row, column=0, sticky=tk.W, pady=5)
         self.export_format_var = tk.StringVar(value=self.config.get('last_format', 'Dark HTML'))
         format_combo = ttk.Combobox(main_frame, textvariable=self.export_format_var,
-                                    values=["Dark HTML", "TXT", "JSON"],
+                                    values=["Dark HTML", "JSON", "PDF"],
                                     state="readonly", width=18)
         format_combo.grid(row=row, column=1, sticky=tk.W, pady=5)
+        row += 1
+        
+        # Include Raw TXT checkbox
+        self.include_raw_txt_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(main_frame, text="Include Raw TXT", 
+                       variable=self.include_raw_txt_var).grid(row=row, column=1, sticky=tk.W, pady=5)
         row += 1
         
         # Filter by user dropdown
@@ -463,6 +564,7 @@ class YouTubeCommentDownloaderGUI:
             limit_text = self.limit_entry.get().strip()
             limit = int(limit_text) if limit_text else None
             export_format = self.export_format_var.get()
+            include_raw_txt = self.include_raw_txt_var.get()
             filter_user_display = self.filter_user_var.get()
             
             # Determine filter mode
@@ -495,8 +597,8 @@ class YouTubeCommentDownloaderGUI:
             # Map export format to extension
             format_map = {
                 "Dark HTML": "html",
-                "TXT": "txt",
-                "JSON": "json"
+                "JSON": "json",
+                "PDF": "pdf"
             }
             file_extension = format_map.get(export_format, "html")
             
@@ -522,10 +624,12 @@ class YouTubeCommentDownloaderGUI:
             
             # Auto-add video author to database
             if channel_id and channel_name:
+                channel_thumbnail = metadata.get('channel_thumbnail', '')
                 self.user_db.add_user(
                     user_id=channel_id,
                     username=channel_name,
                     display_name=channel_name,
+                    profile_pic_url=channel_thumbnail,
                     channel_url=f"https://www.youtube.com/channel/{channel_id}"
                 )
                 self._log_status(f"Added '{channel_name}' to user database")
@@ -603,12 +707,35 @@ class YouTubeCommentDownloaderGUI:
             if export_format == "Dark HTML":
                 filter_label = filter_user_name if is_filtered else None
                 generate_html_output(filtered_comments, output_path, filter_label)
-            elif export_format == "TXT":
-                filter_label = filter_user_name if is_filtered else None
-                generate_txt_output(filtered_comments, output_path, filter_label)
             elif export_format == "JSON":
                 filter_label = filter_user_name if is_filtered else None
                 generate_json_output(filtered_comments, output_path, filter_label)
+            elif export_format == "PDF":
+                try:
+                    filter_label = filter_user_name if is_filtered else None
+                    generate_pdf_output(filtered_comments, output_path, filter_label)
+                except ImportError as e:
+                    self.root.after(0, self._log_status, "")
+                    self.root.after(0, self._log_status, f"PDF export error: {str(e)}")
+                    self.root.after(0, messagebox.showerror, "PDF Export Error", 
+                                   "PDF export requires reportlab. Install it with: pip install reportlab")
+                    return
+            
+            # If include_raw_txt is checked, also export to TXT in Raw folder
+            if include_raw_txt:
+                # Get the creator folder (parent of output_folder)
+                creator_folder = os.path.dirname(output_folder)
+                raw_folder = os.path.join(creator_folder, 'Raw')
+                os.makedirs(raw_folder, exist_ok=True)
+                
+                # Create TXT filename
+                safe_title = os.path.basename(output_path).rsplit('.', 1)[0]  # Remove extension
+                txt_filename = f"{safe_title}.txt"
+                txt_path = os.path.join(raw_folder, txt_filename)
+                
+                self._log_status(f"Also saving TXT to: {txt_path}")
+                filter_label = filter_user_name if is_filtered else None
+                generate_txt_output(filtered_comments, txt_path, filter_label)
             
             elapsed = time.time() - start_time
             self.root.after(0, self._log_status, "")

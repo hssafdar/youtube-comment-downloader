@@ -1,0 +1,7 @@
+# Optional dependencies for enhanced functionality
+
+# For PDF export
+reportlab
+
+# For profile picture display in GUI
+Pillow
