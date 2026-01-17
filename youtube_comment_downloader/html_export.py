@@ -8,7 +8,7 @@ import html
 from datetime import datetime
 
 
-def generate_html_output(comments, output_path, filtered_user=None):
+def generate_html_output(comments, output_path, filtered_user=None, dark_mode=False):
     """
     Generate an HTML file with YouTube-style comment display
     
@@ -16,6 +16,7 @@ def generate_html_output(comments, output_path, filtered_user=None):
         comments: List of comment dictionaries
         output_path: Path to output HTML file
         filtered_user: Username that was filtered (for display in title)
+        dark_mode: Whether to use dark mode theme (default: False)
     """
     # Build comment hierarchy
     comment_map = {c['cid']: c for c in comments}
@@ -36,19 +37,49 @@ def generate_html_output(comments, output_path, filtered_user=None):
             root_comments.append(comment)
     
     # Generate HTML
-    html_content = _generate_html_template(root_comments, filtered_user)
+    html_content = _generate_html_template(root_comments, filtered_user, dark_mode)
     
     # Write to file
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
 
 
-def _generate_html_template(root_comments, filtered_user=None):
+def _generate_html_template(root_comments, filtered_user=None, dark_mode=False):
     """Generate the complete HTML document"""
     
     title = "YouTube Comments"
     if filtered_user:
         title += f" - Filtered by {filtered_user}"
+    
+    # Define color schemes
+    if dark_mode:
+        colors = {
+            'bg_body': '#0f0f0f',
+            'bg_container': '#212121',
+            'text_primary': '#f1f1f1',
+            'text_secondary': '#aaaaaa',
+            'border': '#3f3f3f',
+            'link': '#3ea6ff',
+            'link_hover': '#3ea6ff',
+            'button_hover_bg': 'rgba(62, 166, 255, 0.1)',
+            'avatar_bg': '#3f3f3f',
+            'avatar_text': '#aaaaaa',
+            'shadow': 'rgba(0,0,0,0.3)',
+        }
+    else:
+        colors = {
+            'bg_body': '#f9f9f9',
+            'bg_container': 'white',
+            'text_primary': '#030303',
+            'text_secondary': '#606060',
+            'border': '#e5e5e5',
+            'link': '#030303',
+            'link_hover': '#065fd4',
+            'button_hover_bg': 'rgba(6, 95, 212, 0.1)',
+            'avatar_bg': '#e5e5e5',
+            'avatar_text': '#606060',
+            'shadow': 'rgba(0,0,0,0.1)',
+        }
     
     header = f"""<!DOCTYPE html>
 <html lang="en">
@@ -65,8 +96,8 @@ def _generate_html_template(root_comments, filtered_user=None):
         
         body {{
             font-family: "Roboto", "Arial", sans-serif;
-            background-color: #f9f9f9;
-            color: #030303;
+            background-color: {colors['bg_body']};
+            color: {colors['text_primary']};
             line-height: 1.6;
             padding: 20px;
         }}
@@ -74,10 +105,10 @@ def _generate_html_template(root_comments, filtered_user=None):
         .container {{
             max-width: 1200px;
             margin: 0 auto;
-            background-color: white;
+            background-color: {colors['bg_container']};
             padding: 24px;
             border-radius: 12px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            box-shadow: 0 1px 2px {colors['shadow']};
         }}
         
         h1 {{
@@ -85,7 +116,8 @@ def _generate_html_template(root_comments, filtered_user=None):
             font-weight: 500;
             margin-bottom: 24px;
             padding-bottom: 16px;
-            border-bottom: 1px solid #e5e5e5;
+            border-bottom: 1px solid {colors['border']};
+            color: {colors['text_primary']};
         }}
         
         .comment {{
@@ -104,7 +136,7 @@ def _generate_html_template(root_comments, filtered_user=None):
             height: 40px;
             border-radius: 50%;
             object-fit: cover;
-            background-color: #e5e5e5;
+            background-color: {colors['avatar_bg']};
         }}
         
         .comment-content {{
@@ -121,23 +153,23 @@ def _generate_html_template(root_comments, filtered_user=None):
         .comment-author {{
             font-weight: 500;
             font-size: 13px;
-            color: #030303;
+            color: {colors['text_primary']};
             text-decoration: none;
             margin-right: 4px;
         }}
         
         .comment-author:hover {{
-            color: #065fd4;
+            color: {colors['link_hover']};
         }}
         
         .comment-time {{
             font-size: 12px;
-            color: #606060;
+            color: {colors['text_secondary']};
         }}
         
         .comment-text {{
             font-size: 14px;
-            color: #030303;
+            color: {colors['text_primary']};
             white-space: pre-wrap;
             word-wrap: break-word;
             margin: 8px 0;
@@ -155,7 +187,7 @@ def _generate_html_template(root_comments, filtered_user=None):
             display: flex;
             align-items: center;
             font-size: 12px;
-            color: #606060;
+            color: {colors['text_secondary']};
         }}
         
         .vote-icon {{
@@ -170,7 +202,7 @@ def _generate_html_template(root_comments, filtered_user=None):
         .replies-toggle {{
             display: inline-flex;
             align-items: center;
-            color: #065fd4;
+            color: {colors['link_hover']};
             background: none;
             border: none;
             font-size: 14px;
@@ -181,7 +213,7 @@ def _generate_html_template(root_comments, filtered_user=None):
         }}
         
         .replies-toggle:hover {{
-            background-color: rgba(6, 95, 212, 0.1);
+            background-color: {colors['button_hover_bg']};
             padding: 8px 12px;
             margin-left: -12px;
             border-radius: 18px;
@@ -209,7 +241,7 @@ def _generate_html_template(root_comments, filtered_user=None):
         .no-comments {{
             text-align: center;
             padding: 48px;
-            color: #606060;
+            color: {colors['text_secondary']};
             font-size: 16px;
         }}
         

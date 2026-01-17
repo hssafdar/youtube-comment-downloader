@@ -6,6 +6,7 @@ Tkinter GUI for YouTube Comment Downloader
 import io
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -28,6 +29,10 @@ def to_json(comment, indent=None):
 
 
 class YouTubeCommentDownloaderGUI:
+    # Constants
+    URL_VALIDATION_DEBOUNCE_MS = 500  # Delay before validating URL
+    URL_VALIDATION_TIMEOUT_SEC = 10   # Timeout for URL validation requests
+    
     def __init__(self, root):
         self.root = root
         self.root.title("YouTube Comment Downloader")
@@ -43,6 +48,10 @@ class YouTubeCommentDownloaderGUI:
         
         self.download_thread = None
         self.is_downloading = False
+        
+        # URL validation
+        self.url_validation_timer = None
+        self.url_validation_thread = None
         
         self._create_widgets()
     
@@ -63,6 +72,12 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="YouTube URL or ID:").grid(row=row, column=0, sticky=tk.W, pady=5)
         self.url_entry = ttk.Entry(main_frame, width=50)
         self.url_entry.grid(row=row, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=5)
+        self.url_entry.bind('<KeyRelease>', self._on_url_changed)
+        row += 1
+        
+        # URL validation status
+        self.url_status_label = ttk.Label(main_frame, text="", foreground="gray")
+        self.url_status_label.grid(row=row, column=1, columnspan=2, sticky=tk.W, pady=(0, 5))
         row += 1
         
         # Sort
@@ -94,7 +109,7 @@ class YouTubeCommentDownloaderGUI:
         self.filter_user_entry = ttk.Entry(main_frame, width=20)
         self.filter_user_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
         self.filter_user_entry.insert(0, "")
-        ttk.Label(main_frame, text="(e.g., @username)").grid(row=row, column=2, sticky=tk.W, pady=5)
+        ttk.Label(main_frame, text="(user's display name)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         
         # Pretty output
@@ -107,6 +122,12 @@ class YouTubeCommentDownloaderGUI:
         self.html_export_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(main_frame, text="Export as HTML", 
                        variable=self.html_export_var, command=self._on_html_export_toggle).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        row += 1
+        
+        # Dark mode HTML
+        self.dark_mode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(main_frame, text="Dark mode HTML", 
+                       variable=self.dark_mode_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
         row += 1
         
         # Output file
@@ -186,6 +207,135 @@ class YouTubeCommentDownloaderGUI:
                     self.output_entry.delete(0, tk.END)
                     self.output_entry.insert(0, new_output)
     
+    def _extract_video_id(self, url_or_id):
+        """
+        Extract YouTube video ID from URL or return the ID itself
+        
+        Supports various YouTube URL formats:
+        - Standard: youtube.com/watch?v=VIDEO_ID
+        - Short: youtu.be/VIDEO_ID
+        - Embed: youtube.com/embed/VIDEO_ID
+        - Shorts: youtube.com/shorts/VIDEO_ID
+        - With parameters: youtube.com/watch?v=VIDEO_ID&t=123s
+        
+        Args:
+            url_or_id: YouTube URL or video ID
+            
+        Returns:
+            Video ID if valid, None otherwise
+        """
+        url_or_id = url_or_id.strip()
+        
+        # Try to extract from various YouTube URL formats first
+        # Pattern 1: Matches direct video paths (watch, shorts, embed, etc.)
+        direct_path_pattern = (
+            r'(?:youtube\.com\/watch\?v=|'  # Standard watch URL
+            r'youtu\.be\/|'                  # Short URL
+            r'youtube\.com\/embed\/|'        # Embed URL
+            r'youtube\.com\/v\/|'            # Legacy v URL
+            r'youtube\.com\/shorts\/)'       # Shorts URL
+            r'([a-zA-Z0-9_-]{11})'          # Video ID (11 chars)
+        )
+        
+        # Pattern 2: Matches v parameter in any YouTube URL
+        v_param_pattern = r'youtube\.com\/.*[?&]v=([a-zA-Z0-9_-]{11})'
+        
+        for pattern in [direct_path_pattern, v_param_pattern]:
+            match = re.search(pattern, url_or_id)
+            if match:
+                return match.group(1)
+        
+        # If it looks like just an ID (exactly 11 characters, alphanumeric with _ or -), return it
+        if re.match(r'^[a-zA-Z0-9_-]{11}$', url_or_id):
+            return url_or_id
+        
+        return None
+    
+    def _on_url_changed(self, event=None):
+        """Handle URL entry text change with debouncing"""
+        # Cancel any pending validation
+        if self.url_validation_timer:
+            self.root.after_cancel(self.url_validation_timer)
+        
+        # Schedule new validation after configured delay
+        self.url_validation_timer = self.root.after(
+            self.URL_VALIDATION_DEBOUNCE_MS, self._validate_url
+        )
+    
+    def _validate_url(self):
+        """Validate the URL and check for comments (runs after debounce)"""
+        url_or_id = self.url_entry.get().strip()
+        
+        if not url_or_id:
+            self.url_status_label.config(text="", foreground="gray")
+            return
+        
+        # Show checking status
+        self.url_status_label.config(text="⏳ Checking...", foreground="gray")
+        
+        # Run validation in background thread
+        if self.url_validation_thread and self.url_validation_thread.is_alive():
+            # Skip if already validating
+            return
+        
+        self.url_validation_thread = threading.Thread(
+            target=self._validate_url_background,
+            args=(url_or_id,),
+            daemon=True
+        )
+        self.url_validation_thread.start()
+    
+    def _validate_url_background(self, url_or_id):
+        """Validate URL in background thread"""
+        try:
+            # Extract video ID
+            video_id = self._extract_video_id(url_or_id)
+            
+            if not video_id:
+                self.root.after(0, self.url_status_label.config, 
+                              {"text": "✗ Invalid YouTube URL", "foreground": "red"})
+                return
+            
+            # Try to fetch the page to verify it's valid
+            downloader = YoutubeCommentDownloader()
+            url = f"https://www.youtube.com/watch?v={video_id}"
+            
+            try:
+                response = downloader.session.get(
+                    url, timeout=self.URL_VALIDATION_TIMEOUT_SEC
+                )
+                if response.status_code != 200:
+                    self.root.after(0, self.url_status_label.config,
+                                  {"text": "✗ Video not found", "foreground": "red"})
+                    return
+                
+                # Check if comments are available
+                # Note: This is a heuristic check that may need updates if YouTube changes their HTML
+                html_content = response.text
+                if 'commentsDisabled' in html_content or '"commentCount":0' in html_content:
+                    self.root.after(0, self.url_status_label.config,
+                                  {"text": "✓ Valid URL (comments may be disabled)", "foreground": "orange"})
+                else:
+                    # Try to extract comment count
+                    comment_count_match = re.search(r'"commentCount":"(\d+)"', html_content)
+                    if comment_count_match:
+                        count = int(comment_count_match.group(1))
+                        count_str = f"{count:,}"
+                        self.root.after(0, self.url_status_label.config,
+                                      {"text": f"✓ Valid - ~{count_str} comments", "foreground": "green"})
+                    else:
+                        self.root.after(0, self.url_status_label.config,
+                                      {"text": "✓ Valid YouTube URL", "foreground": "green"})
+            except Exception as e:
+                # Network error or timeout
+                self.root.after(0, self.url_status_label.config,
+                              {"text": "✓ Valid format (couldn't verify)", "foreground": "orange"})
+        
+        except Exception as e:
+            # Any other error
+            self.root.after(0, self.url_status_label.config,
+                          {"text": "✗ Invalid URL", "foreground": "red"})
+    
     def _log_status(self, message):
         """Add message to status text area"""
         self.status_text.insert(tk.END, message + "\n")
@@ -221,13 +371,12 @@ class YouTubeCommentDownloaderGUI:
         
         for comment in all_comments:
             # Check if this comment is by the target user
+            # Note: 'author' contains the display name (e.g., "John Doe")
+            # 'channel' contains the channel ID (e.g., "UC123...") not the handle
             author = comment.get('author', '').lower()
-            channel = comment.get('channel', '').lower()
             
-            # Match by author name or channel ID
-            is_target_user = (author == target_user_lower or 
-                            channel == target_user_lower or
-                            f"@{channel}" == target_user_lower)
+            # Match by author display name (case-insensitive)
+            is_target_user = author == target_user_lower
             
             if is_target_user:
                 # Add the user's comment
@@ -307,6 +456,7 @@ class YouTubeCommentDownloaderGUI:
             pretty = self.pretty_var.get()
             filter_user = self.filter_user_entry.get().strip() or None
             html_export = self.html_export_var.get()
+            dark_mode = self.dark_mode_var.get()
             
             # Determine if input is URL or ID
             is_url = url_or_id.startswith('http://') or url_or_id.startswith('https://')
@@ -371,7 +521,9 @@ class YouTubeCommentDownloaderGUI:
                 # Generate HTML
                 self._log_status("")
                 self._log_status("Generating HTML output...")
-                generate_html_output(filtered_comments, output_file, filter_user)
+                if dark_mode:
+                    self._log_status("Using dark mode theme...")
+                generate_html_output(filtered_comments, output_file, filter_user, dark_mode)
             else:
                 # Write JSON
                 fp = None
