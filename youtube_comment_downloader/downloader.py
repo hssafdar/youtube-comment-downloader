@@ -55,7 +55,7 @@ class YoutubeCommentDownloader:
             Dictionary with video metadata, or None if extraction fails
         """
         try:
-            response = self.session.get(youtube_url)
+            response = self.session.get(youtube_url, timeout=30)
             
             if 'consent' in str(response.url):
                 params = dict(re.findall(YT_HIDDEN_INPUT_RE, response.text))

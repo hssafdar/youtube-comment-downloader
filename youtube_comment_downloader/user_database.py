@@ -6,7 +6,10 @@ Stores user information and preferences for filtering
 
 import sqlite3
 import os
+import re
+import json
 from pathlib import Path
+import requests
 
 
 class UserDatabase:
@@ -229,3 +232,114 @@ class UserDatabase:
             return [dict(row) for row in rows]
         except (sqlite3.Error, OSError):
             return []
+    
+    def fetch_user_from_url(self, url):
+        """
+        Fetch user information from a YouTube channel URL
+        
+        Supports various URL formats:
+        - https://www.youtube.com/@username
+        - https://www.youtube.com/channel/UC...
+        - https://www.youtube.com/c/channelname
+        
+        Args:
+            url: YouTube channel URL
+        
+        Returns:
+            Dictionary with user info (user_id, username, display_name, profile_pic_url)
+            or None if extraction fails
+        """
+        try:
+            # Normalize URL
+            url = url.strip()
+            if not url.startswith('http'):
+                url = 'https://' + url
+            
+            # Make request
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            }
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            html = response.text
+            
+            # Extract data from ytInitialData
+            yt_initial_data_pattern = r'(?:window\s*\[\s*["\']ytInitialData["\']\s*\]|ytInitialData)\s*=\s*({.+?})\s*;\s*(?:var\s+meta|</script|\n)'
+            match = re.search(yt_initial_data_pattern, html, re.DOTALL)
+            
+            if not match:
+                return None
+            
+            data = json.loads(match.group(1))
+            
+            # Extract channel metadata
+            user_info = {}
+            
+            # Try to find channel ID
+            # Method 1: From channelId in metadata
+            metadata = self._search_dict(data, 'channelId')
+            for channel_id in metadata:
+                if channel_id and isinstance(channel_id, str) and channel_id.startswith('UC'):
+                    user_info['user_id'] = channel_id
+                    break
+            
+            # Method 2: From externalId
+            if 'user_id' not in user_info:
+                external_ids = self._search_dict(data, 'externalId')
+                for ext_id in external_ids:
+                    if ext_id and isinstance(ext_id, str) and ext_id.startswith('UC'):
+                        user_info['user_id'] = ext_id
+                        break
+            
+            # Extract display name/title
+            titles = self._search_dict(data, 'title')
+            for title in titles:
+                if isinstance(title, str) and title and len(title) > 0 and len(title) < 100:
+                    user_info['display_name'] = title
+                    break
+            
+            # Extract profile picture
+            avatars = self._search_dict(data, 'avatar')
+            for avatar in avatars:
+                if isinstance(avatar, dict) and 'thumbnails' in avatar:
+                    thumbnails = avatar['thumbnails']
+                    if thumbnails and len(thumbnails) > 0:
+                        # Get highest resolution thumbnail
+                        user_info['profile_pic_url'] = thumbnails[-1].get('url', '')
+                        break
+            
+            # Validate we have the minimum required info
+            if 'user_id' not in user_info or 'display_name' not in user_info:
+                return None
+            
+            # Set username as display name if not already set
+            if 'username' not in user_info:
+                user_info['username'] = user_info['display_name']
+            
+            user_info['channel_url'] = f"https://www.youtube.com/channel/{user_info['user_id']}"
+            
+            return user_info
+            
+        except (requests.RequestException, json.JSONDecodeError, ValueError, KeyError):
+            return None
+    
+    def _search_dict(self, data, key):
+        """
+        Recursively search for a key in nested dictionaries and lists
+        
+        Args:
+            data: Dictionary or list to search
+            key: Key to search for
+        
+        Yields:
+            Values found for the key
+        """
+        if isinstance(data, dict):
+            if key in data:
+                yield data[key]
+            for value in data.values():
+                yield from self._search_dict(value, key)
+        elif isinstance(data, list):
+            for item in data:
+                yield from self._search_dict(item, key)
