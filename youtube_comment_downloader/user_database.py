@@ -429,3 +429,18 @@ class UserDatabase:
         elif isinstance(data, list):
             for item in data:
                 yield from self._search_dict(item, key)
+    
+    def user_folder_exists(self, export_dir, username):
+        """
+        Check if a user's folder exists in the export directory
+        
+        Args:
+            export_dir: Export directory path
+            username: Username to check
+        
+        Returns:
+            Boolean indicating if the folder exists
+        """
+        from .file_utils import sanitize_filename
+        user_folder = os.path.join(export_dir, sanitize_filename(username))
+        return os.path.isdir(user_folder)
