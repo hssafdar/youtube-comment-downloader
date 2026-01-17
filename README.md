@@ -67,7 +67,14 @@ The GUI provides an easy-to-use interface with the following features:
 - Sort options (Popular or Recent)
 - Optional language setting
 - Optional limit on number of comments
+- **Filter by User** - Filter comments to show only those by a specific user (e.g., @username)
+  - When filtering, parent comments are also included when the user replied to them (for conversation context)
 - Pretty output option (indented JSON)
+- **Export as HTML** - Generate a YouTube-style HTML interface with:
+  - Clean, modern styling similar to YouTube's comment section
+  - Profile pictures (with fallback for missing avatars)
+  - Collapsible reply threads
+  - Timestamps, like counts, and heart indicators
 - File browser for selecting output location
 - Real-time status updates during download
 
