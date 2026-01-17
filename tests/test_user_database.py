@@ -156,6 +156,32 @@ def test_user_database_search():
         os.rmdir(temp_dir)
 
 
+def test_url_validation():
+    """Test URL validation to prevent SSRF"""
+    db = UserDatabase()
+    
+    # These should be rejected (non-YouTube URLs)
+    assert db.fetch_user_from_url('https://evil.com') is None
+    assert db.fetch_user_from_url('https://google.com') is None
+    assert db.fetch_user_from_url('http://localhost') is None
+
+
+def test_channel_id_validation():
+    """Test channel ID validation helper"""
+    db = UserDatabase()
+    
+    # Valid channel IDs
+    assert db._is_valid_channel_id('UCxxxxxxxxxxxxxxxxxxxx')
+    assert db._is_valid_channel_id('UC' + 'x' * 30)
+    
+    # Invalid channel IDs
+    assert not db._is_valid_channel_id('UC123')  # Too short
+    assert not db._is_valid_channel_id('AB' + 'x' * 30)  # Doesn't start with UC
+    assert not db._is_valid_channel_id(None)
+    assert not db._is_valid_channel_id(123)
+    assert not db._is_valid_channel_id('')
+
+
 if __name__ == '__main__':
     test_user_database_add_user()
     print("✓ test_user_database_add_user passed")
@@ -171,5 +197,11 @@ if __name__ == '__main__':
     
     test_user_database_search()
     print("✓ test_user_database_search passed")
+    
+    test_url_validation()
+    print("✓ test_url_validation passed")
+    
+    test_channel_id_validation()
+    print("✓ test_channel_id_validation passed")
     
     print("\nAll user database tests passed! ✓")

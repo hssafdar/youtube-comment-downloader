@@ -15,6 +15,11 @@ import requests
 class UserDatabase:
     """Manages storage and retrieval of YouTube user information"""
     
+    # Constants for validation
+    MIN_TITLE_LENGTH = 3
+    MAX_TITLE_LENGTH = 100
+    MIN_CHANNEL_ID_LENGTH = 20
+    
     def __init__(self):
         """Initialize the database"""
         # Store database in user's home directory
@@ -22,6 +27,20 @@ class UserDatabase:
         self.db_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.db_dir / 'users.db'
         self._init_db()
+    
+    def _is_valid_channel_id(self, channel_id):
+        """
+        Validate if a string is a valid YouTube channel ID
+        
+        Args:
+            channel_id: String to validate
+        
+        Returns:
+            Boolean indicating if valid
+        """
+        return (isinstance(channel_id, str) and 
+                channel_id.startswith('UC') and 
+                len(channel_id) > self.MIN_CHANNEL_ID_LENGTH)
     
     def _init_db(self):
         """Create the database tables if they don't exist"""
@@ -255,6 +274,11 @@ class UserDatabase:
             if not url.startswith('http'):
                 url = 'https://' + url
             
+            # Validate it's a YouTube URL to prevent SSRF
+            parsed_url = requests.utils.urlparse(url)
+            if parsed_url.netloc not in ['www.youtube.com', 'youtube.com', 'm.youtube.com']:
+                return None
+            
             # Extract channel ID directly from URL if it's a /channel/ URL
             channel_id_match = re.search(r'/channel/(UC[A-Za-z0-9_-]+)', url)
             if channel_id_match:
@@ -306,7 +330,7 @@ class UserDatabase:
                 # Method 1: From channelId in metadata
                 metadata = self._search_dict(data, 'channelId')
                 for ch_id in metadata:
-                    if ch_id and isinstance(ch_id, str) and ch_id.startswith('UC') and len(ch_id) > 20:
+                    if self._is_valid_channel_id(ch_id):
                         user_info['user_id'] = ch_id
                         break
             
@@ -314,7 +338,7 @@ class UserDatabase:
             if 'user_id' not in user_info:
                 external_ids = self._search_dict(data, 'externalId')
                 for ext_id in external_ids:
-                    if ext_id and isinstance(ext_id, str) and ext_id.startswith('UC') and len(ext_id) > 20:
+                    if self._is_valid_channel_id(ext_id):
                         user_info['user_id'] = ext_id
                         break
             
@@ -361,12 +385,12 @@ class UserDatabase:
             if 'display_name' not in user_info:
                 titles = self._search_dict(data, 'title')
                 for title in titles:
-                    if isinstance(title, str) and title and 3 < len(title) < 100:
+                    if isinstance(title, str) and title and self.MIN_TITLE_LENGTH < len(title) < self.MAX_TITLE_LENGTH:
                         user_info['display_name'] = title
                         break
                     elif isinstance(title, dict) and 'simpleText' in title:
                         text = title['simpleText']
-                        if text and 3 < len(text) < 100:
+                        if text and self.MIN_TITLE_LENGTH < len(text) < self.MAX_TITLE_LENGTH:
                             user_info['display_name'] = text
                             break
             
