@@ -423,7 +423,7 @@ class YouTubeCommentDownloaderGUI:
                 # Generate HTML (always dark mode)
                 self._log_status("")
                 self._log_status("Generating HTML output (dark mode)...")
-                filter_label = "Video Author" if filter_author else None
+                filter_label = "Video Author" if filter_author and author_channel_id else None
                 generate_html_output(filtered_comments, output_file, filter_label)
             else:
                 # Write JSON (raw, not pretty-printed)

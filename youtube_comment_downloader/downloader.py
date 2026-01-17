@@ -63,7 +63,8 @@ class YoutubeCommentDownloader:
                 response = self.session.post(YOUTUBE_CONSENT_URL, params=params)
             
             html = response.text
-            data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default=''))
+            data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default='{}'))
+
             
             # Try to find channel ID in the video owner renderer
             owner_renderer = next(self.search_dict(data, 'videoOwnerRenderer'), None)
