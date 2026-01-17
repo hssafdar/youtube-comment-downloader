@@ -229,6 +229,28 @@ def _generate_html_template(root_comments, filtered_user=None):
             font-size: 16px;
         }}
         
+        .controls {{
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid {colors['border']};
+        }}
+        
+        .controls button {{
+            background-color: {colors['button_hover_bg']};
+            color: {colors['link']};
+            border: 1px solid {colors['border']};
+            padding: 8px 16px;
+            border-radius: 18px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            margin-right: 8px;
+        }}
+        
+        .controls button:hover {{
+            background-color: rgba(62, 166, 255, 0.2);
+        }}
+        
         @media (max-width: 768px) {{
             body {{
                 padding: 10px;
@@ -253,6 +275,12 @@ def _generate_html_template(root_comments, filtered_user=None):
         header += """        <div class="no-comments">No comments available</div>
 """
     else:
+        # Add expand/collapse all buttons
+        header += """        <div class="controls">
+            <button onclick="expandAll()">Expand All Replies</button>
+            <button onclick="collapseAll()">Collapse All Replies</button>
+        </div>
+"""
         # Generate comments HTML
         comments_html = ""
         for comment in root_comments:
@@ -275,6 +303,33 @@ def _generate_html_template(root_comments, filtered_user=None):
                 container.classList.add('expanded');
                 toggle.innerHTML = '<span class="replies-icon">▲</span>Hide replies';
             }
+        }
+        
+        function expandAll() {
+            const allContainers = document.querySelectorAll('.replies-container');
+            const allToggles = document.querySelectorAll('.replies-toggle');
+            
+            allContainers.forEach(container => {
+                container.classList.add('expanded');
+            });
+            
+            allToggles.forEach(toggle => {
+                toggle.innerHTML = '<span class="replies-icon">▲</span>Hide replies';
+            });
+        }
+        
+        function collapseAll() {
+            const allContainers = document.querySelectorAll('.replies-container');
+            const allToggles = document.querySelectorAll('.replies-toggle');
+            
+            allContainers.forEach(container => {
+                container.classList.remove('expanded');
+            });
+            
+            allToggles.forEach(toggle => {
+                const replyCount = toggle.nextElementSibling.querySelectorAll('.reply-comment').length;
+                toggle.innerHTML = '<span class="replies-icon">▼</span>View ' + replyCount + ' ' + (replyCount === 1 ? 'reply' : 'replies');
+            });
         }
     </script>
 </body>
