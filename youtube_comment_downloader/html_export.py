@@ -9,7 +9,7 @@ import os
 from datetime import datetime
 
 
-def generate_html_output(comments, output_path, filtered_user=None, post_metadata=None):
+def generate_html_output(comments, output_path, filtered_user=None):
     """
     Generate an HTML file with YouTube-style comment display
     
@@ -17,7 +17,6 @@ def generate_html_output(comments, output_path, filtered_user=None, post_metadat
         comments: List of comment dictionaries
         output_path: Path to output HTML file
         filtered_user: Username that was filtered (for display in title)
-        post_metadata: Optional post metadata dict (for community posts)
     """
     # Build comment hierarchy
     comment_map = {c['cid']: c for c in comments}
@@ -38,19 +37,17 @@ def generate_html_output(comments, output_path, filtered_user=None, post_metadat
             root_comments.append(comment)
     
     # Generate HTML (always using dark mode)
-    html_content = _generate_html_template(root_comments, filtered_user, post_metadata)
+    html_content = _generate_html_template(root_comments, filtered_user)
     
     # Write to file
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
 
 
-def _generate_html_template(root_comments, filtered_user=None, post_metadata=None):
+def _generate_html_template(root_comments, filtered_user=None):
     """Generate the complete HTML document (always in dark mode)"""
     
     title = "YouTube Comments"
-    if post_metadata:
-        title = "YouTube Community Post Comments"
     if filtered_user:
         title += f" - Filtered by {filtered_user}"
     
@@ -273,31 +270,6 @@ def _generate_html_template(root_comments, filtered_user=None, post_metadata=Non
 <body>
     <div class="container">
         <h1>{html.escape(title)}</h1>
-"""
-    
-    # Add post content if available
-    if post_metadata:
-        post_content = post_metadata.get('content', '')
-        post_images = post_metadata.get('local_image_paths', [])
-        
-        if post_content or post_images:
-            header += """        <div class="post-content" style="background-color: #272727; padding: 16px; border-radius: 8px; margin-bottom: 24px;">
-"""
-            if post_content:
-                header += f"""            <div class="post-text" style="color: #f1f1f1; white-space: pre-wrap; margin-bottom: 12px;">{html.escape(post_content)}</div>
-"""
-            if post_images:
-                header += """            <div class="post-images" style="display: flex; gap: 12px; flex-wrap: wrap;">
-"""
-                for img_path in post_images:
-                    # Use relative path for images
-                    img_filename = os.path.basename(img_path)
-                    img_rel_path = f"assets/{img_filename}"
-                    header += f"""                <img src="{html.escape(img_rel_path)}" style="max-width: 300px; border-radius: 8px;">
-"""
-                header += """            </div>
-"""
-            header += """        </div>
 """
     
     if not root_comments:

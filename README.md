@@ -23,6 +23,12 @@ For enhanced functionality, you can install optional packages:
 # For PDF export support
 pip install reportlab
 
+# For date range filtering (required for GUI date filter feature)
+pip install dateparser
+
+# For date picker calendar widget (optional, for future enhancement)
+pip install tkcalendar
+
 # For macOS: Fix app name in dock (shows "YouTube Comment Downloader" instead of "Python")
 pip install pyobjc-framework-Cocoa
 
@@ -78,6 +84,22 @@ youtube-comment-downloader-gui
 ```
 
 The GUI provides an easy-to-use interface with the following features:
+
+#### NEW: Queue System & Batch Downloads 🆕
+- **Queue-based downloading** - Add multiple videos and process them sequentially
+- **Playlist support** - Automatically extract and queue all videos from a playlist
+- **Skip detection** - Automatically skip videos that are already downloaded
+- **Pause & Resume** - Pause the queue and resume later, even after closing the app
+- **State persistence** - Queue is saved automatically and can be resumed on next launch
+- **Status tracking** - See real-time status of each video (📋 pending, ⏳ downloading, ✅ complete, etc.)
+
+For detailed information about the queue system, see [QUEUE_GUIDE.md](QUEUE_GUIDE.md)
+
+#### Date Range Filtering 🆕
+- **Filter comments by date** - Only download comments from a specific time period
+- **Quick presets** - Past 24 Hours, Past Week, Past Month, Past Year
+- **Custom ranges** - Specify exact start and end dates
+- Perfect for getting recent discussions on older videos
 
 #### Core Features
 - Input fields for YouTube URL or video ID
