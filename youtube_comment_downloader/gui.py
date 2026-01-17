@@ -3,29 +3,100 @@
 Tkinter GUI for YouTube Comment Downloader
 """
 
-import io
-import json
 import os
 import re
-import sys
 import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from .config import Config
 from .downloader import YoutubeCommentDownloader, SORT_BY_POPULAR, SORT_BY_RECENT
+from .file_utils import create_export_path, open_folder
 from .html_export import generate_html_output
+from .json_export import generate_json_output
+from .txt_export import generate_txt_output
+from .user_database import UserDatabase
 
-INDENT = 4
 
-
-def to_json(comment, indent=None):
-    """Convert comment to JSON string with optional indentation"""
-    comment_str = json.dumps(comment, ensure_ascii=False, indent=indent)
-    if indent is None:
-        return comment_str
-    padding = ' ' * (2 * indent) if indent else ''
-    return ''.join(padding + line for line in comment_str.splitlines(True))
+class UserDatabaseDialog:
+    """Dialog for managing users in the database"""
+    
+    def __init__(self, parent, user_db):
+        self.user_db = user_db
+        self.result = None
+        
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("User Database Manager")
+        self.dialog.geometry("600x400")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        
+        self._create_widgets()
+        self._refresh_list()
+    
+    def _create_widgets(self):
+        """Create dialog widgets"""
+        main_frame = ttk.Frame(self.dialog, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Instructions
+        ttk.Label(main_frame, text="Manage users for filtering:").pack(anchor=tk.W, pady=(0, 10))
+        
+        # Listbox with scrollbar
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        
+        scrollbar = ttk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        self.user_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set)
+        self.user_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.user_listbox.yview)
+        
+        self.user_listbox.bind('<Double-Button-1>', lambda e: self._select_user())
+        
+        # Buttons
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(pady=(10, 0))
+        
+        ttk.Button(button_frame, text="Select", command=self._select_user).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Delete", command=self._delete_user).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Close", command=self.dialog.destroy).pack(side=tk.LEFT, padx=5)
+    
+    def _refresh_list(self):
+        """Refresh the user list"""
+        self.user_listbox.delete(0, tk.END)
+        users = self.user_db.get_all_users()
+        self.users = users
+        
+        if not users:
+            self.user_listbox.insert(tk.END, "(No users in database)")
+        else:
+            for user in users:
+                display = f"{user['display_name']} (@{user['username']})"
+                self.user_listbox.insert(tk.END, display)
+    
+    def _select_user(self):
+        """Select a user from the list"""
+        selection = self.user_listbox.curselection()
+        if selection and self.users:
+            idx = selection[0]
+            if idx < len(self.users):
+                self.result = self.users[idx]
+                self.dialog.destroy()
+    
+    def _delete_user(self):
+        """Delete selected user"""
+        selection = self.user_listbox.curselection()
+        if selection and self.users:
+            idx = selection[0]
+            if idx < len(self.users):
+                user = self.users[idx]
+                if messagebox.askyesno("Confirm Delete", 
+                                      f"Delete user '{user['display_name']}'?"):
+                    self.user_db.delete_user(user['user_id'])
+                    self._refresh_list()
 
 
 class YouTubeCommentDownloaderGUI:
@@ -36,7 +107,7 @@ class YouTubeCommentDownloaderGUI:
         
         # Set window size and center on screen
         window_width = 700
-        window_height = 600
+        window_height = 650
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         x = (screen_width - window_width) // 2
@@ -45,6 +116,10 @@ class YouTubeCommentDownloaderGUI:
         
         self.download_thread = None
         self.is_downloading = False
+        
+        # Initialize config and database
+        self.config = Config()
+        self.user_db = UserDatabase()
         
         self._create_widgets()
     
@@ -72,7 +147,6 @@ class YouTubeCommentDownloaderGUI:
         self.sort_var = tk.IntVar(value=SORT_BY_RECENT)
         sort_frame = ttk.Frame(main_frame)
         sort_frame.grid(row=row, column=1, columnspan=2, sticky=tk.W, pady=5)
-        # Create a mapping between display values and actual values
         self.sort_options = {"Popular": SORT_BY_POPULAR, "Recent": SORT_BY_RECENT}
         self.sort_display_var = tk.StringVar(value="Recent")
         ttk.Combobox(sort_frame, textvariable=self.sort_display_var, 
@@ -94,29 +168,50 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="(number of comments)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         
-        # Filter by Video Author
-        self.filter_author_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(main_frame, text="Filter by Video Author", 
-                       variable=self.filter_author_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        # Export format dropdown
+        ttk.Label(main_frame, text="Export Format:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        self.export_format_var = tk.StringVar(value=self.config.get('last_format', 'Dark HTML'))
+        format_combo = ttk.Combobox(main_frame, textvariable=self.export_format_var,
+                                    values=["Dark HTML", "TXT", "JSON"],
+                                    state="readonly", width=18)
+        format_combo.grid(row=row, column=1, sticky=tk.W, pady=5)
         row += 1
         
-        # HTML export (checked by default)
-        self.html_export_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(main_frame, text="Export as HTML", 
-                       variable=self.html_export_var, command=self._on_html_export_toggle).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
+        # Filter by user dropdown
+        ttk.Label(main_frame, text="Filter by User:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        filter_frame = ttk.Frame(main_frame)
+        filter_frame.grid(row=row, column=1, columnspan=2, sticky=tk.W, pady=5)
+        
+        self.filter_user_var = tk.StringVar(value="None")
+        self.filter_combo = ttk.Combobox(filter_frame, textvariable=self.filter_user_var,
+                                         state="readonly", width=18)
+        self.filter_combo.pack(side=tk.LEFT)
+        self.filter_combo.bind('<<ComboboxSelected>>', self._on_filter_selected)
+        self._update_filter_dropdown()
+        
+        ttk.Button(filter_frame, text="Manage...", 
+                  command=self._open_user_manager).pack(side=tk.LEFT, padx=(5, 0))
         row += 1
         
-        # Output file
-        ttk.Label(main_frame, text="Output file:").grid(row=row, column=0, sticky=tk.W, pady=5)
-        self.output_entry = ttk.Entry(main_frame, width=40)
-        self.output_entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5)
-        self.browse_button = ttk.Button(main_frame, text="Browse...", command=self._browse_output)
+        # Export folder
+        ttk.Label(main_frame, text="Export Folder:").grid(row=row, column=0, sticky=tk.W, pady=5)
+        self.folder_entry = ttk.Entry(main_frame, width=40)
+        self.folder_entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=5)
+        self.folder_entry.insert(0, self.config.get_export_folder())
+        self.browse_button = ttk.Button(main_frame, text="Browse...", command=self._browse_folder)
         self.browse_button.grid(row=row, column=2, sticky=tk.W, pady=5, padx=(5, 0))
+        row += 1
+        
+        # Progress bar
+        self.progress_var = tk.DoubleVar()
+        self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var, 
+                                           maximum=100, mode='determinate')
+        self.progress_bar.grid(row=row, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=10)
         row += 1
         
         # Buttons
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=row, column=0, columnspan=3, pady=20)
+        button_frame.grid(row=row, column=0, columnspan=3, pady=10)
         
         self.download_button = ttk.Button(button_frame, text="Download", command=self._start_download)
         self.download_button.pack(side=tk.LEFT, padx=5)
@@ -134,7 +229,7 @@ class YouTubeCommentDownloaderGUI:
         text_frame.grid(row=row, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         main_frame.rowconfigure(row, weight=1)
         
-        self.status_text = tk.Text(text_frame, height=15, width=70, wrap=tk.WORD)
+        self.status_text = tk.Text(text_frame, height=12, width=70, wrap=tk.WORD)
         scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.status_text.yview)
         self.status_text.configure(yscrollcommand=scrollbar.set)
         
@@ -145,43 +240,66 @@ class YouTubeCommentDownloaderGUI:
         text_frame.rowconfigure(0, weight=1)
         
         self._log_status("Ready to download YouTube comments.")
+        
+        # Store selected user info
+        self.selected_user = None
+    
+    def _update_filter_dropdown(self):
+        """Update the filter dropdown with users from database"""
+        # Get users from database
+        users = self.user_db.get_dropdown_users()
+        
+        # Build dropdown options
+        options = ["None", "Video Author"]
+        for user in users:
+            options.append(f"{user['display_name']}")
+        options.append("More...")
+        
+        self.filter_combo['values'] = options
+        
+        # Store user mapping
+        self.filter_user_map = {}
+        for user in users:
+            self.filter_user_map[user['display_name']] = user
+    
+    def _on_filter_selected(self, event=None):
+        """Handle filter dropdown selection"""
+        selected = self.filter_user_var.get()
+        if selected == "More...":
+            # Reset to previous value and open manager
+            self.filter_user_var.set("None")
+            self._open_user_manager()
+    
+    def _open_user_manager(self):
+        """Open the user database manager dialog"""
+        dialog = UserDatabaseDialog(self.root, self.user_db)
+        self.root.wait_window(dialog.dialog)
+        
+        # Refresh the dropdown
+        self._update_filter_dropdown()
+        
+        # If a user was selected in the dialog, set it as filter
+        if dialog.result:
+            self.filter_user_var.set(dialog.result['display_name'])
+    
+    def _browse_folder(self):
+        """Open folder dialog to select export folder"""
+        folder = filedialog.askdirectory(
+            title="Select export folder",
+            initialdir=self.folder_entry.get() or None
+        )
+        if folder:
+            self.folder_entry.delete(0, tk.END)
+            self.folder_entry.insert(0, folder)
+            self.config.set_export_folder(folder)
     
     def _browse_output(self):
-        """Open file dialog to select output file"""
-        # Determine default extension based on HTML export checkbox
-        if self.html_export_var.get():
-            default_ext = ".html"
-            filetypes = [("HTML files", "*.html"), ("All files", "*.*")]
-        else:
-            default_ext = ".json"
-            filetypes = [("JSON files", "*.json"), ("All files", "*.*")]
-        
-        filename = filedialog.asksaveasfilename(
-            title="Select output file",
-            defaultextension=default_ext,
-            filetypes=filetypes
-        )
-        if filename:
-            self.output_entry.delete(0, tk.END)
-            self.output_entry.insert(0, filename)
+        """Removed - using folder picker instead"""
+        pass
     
     def _on_html_export_toggle(self):
-        """Handle HTML export checkbox toggle"""
-        # Update the output file extension if one is already selected
-        current_output = self.output_entry.get().strip()
-        if current_output:
-            if self.html_export_var.get():
-                # Switch to .html
-                if current_output.endswith('.json'):
-                    new_output = current_output[:-5] + '.html'
-                    self.output_entry.delete(0, tk.END)
-                    self.output_entry.insert(0, new_output)
-            else:
-                # Switch to .json
-                if current_output.endswith('.html'):
-                    new_output = current_output[:-5] + '.json'
-                    self.output_entry.delete(0, tk.END)
-                    self.output_entry.insert(0, new_output)
+        """Removed - using dropdown instead"""
+        pass
     
     def _extract_video_id(self, url_or_id):
         """
@@ -233,19 +351,28 @@ class YouTubeCommentDownloaderGUI:
         self.status_text.see(tk.END)
         self.status_text.update_idletasks()
     
-    def _filter_comments_by_author(self, all_comments, author_channel_id):
+    def _update_progress(self, current, total):
+        """Update progress bar and status"""
+        if total > 0:
+            percentage = (current / total) * 100
+            self.progress_var.set(percentage)
+            status_msg = f"Downloading... {current}/{total:,} comments ({percentage:.0f}%)"
+            self._log_status(status_msg)
+        self.root.update_idletasks()
+    
+    def _filter_comments_by_user(self, all_comments, user_channel_id):
         """
-        Filter comments to show only those by the video author
-        Also include parent comments when the author replied to them
+        Filter comments to show only those by a specific user
+        Also include parent comments when the user replied to them
         
         Args:
             all_comments: List of all comment dictionaries
-            author_channel_id: Channel ID of the video author
+            user_channel_id: Channel ID of the user to filter by
         
         Returns:
             List of filtered comments
         """
-        if not author_channel_id:
+        if not user_channel_id:
             return all_comments
         
         # Build a map of comment IDs to comments for lookup
@@ -255,14 +382,14 @@ class YouTubeCommentDownloaderGUI:
         result_cids = set()
         
         for comment in all_comments:
-            # Check if this comment is by the video author
+            # Check if this comment is by the target user
             comment_channel = comment.get('channel', '')
             
             # Match by channel ID
-            is_author = comment_channel == author_channel_id
+            is_target_user = comment_channel == user_channel_id
             
-            if is_author:
-                # Add the author's comment
+            if is_target_user:
+                # Add the user's comment
                 if comment['cid'] not in result_cids:
                     result.append(comment)
                     result_cids.add(comment['cid'])
@@ -282,14 +409,18 @@ class YouTubeCommentDownloaderGUI:
     def _validate_inputs(self):
         """Validate user inputs"""
         url_or_id = self.url_entry.get().strip()
-        output_file = self.output_entry.get().strip()
+        export_folder = self.folder_entry.get().strip()
         
         if not url_or_id:
             messagebox.showerror("Input Error", "Please enter a YouTube URL or ID")
             return False
         
-        if not output_file:
-            messagebox.showerror("Input Error", "Please specify an output file")
+        if not export_folder:
+            messagebox.showerror("Input Error", "Please specify an export folder")
+            return False
+        
+        if not os.path.isdir(export_folder):
+            messagebox.showerror("Input Error", "Export folder does not exist")
             return False
         
         # Validate limit if provided
@@ -321,6 +452,7 @@ class YouTubeCommentDownloaderGUI:
         
         # Clear status
         self.status_text.delete(1.0, tk.END)
+        self.progress_var.set(0)
         
         # Start download thread
         self.download_thread = threading.Thread(target=self._download_comments, daemon=True)
@@ -328,74 +460,104 @@ class YouTubeCommentDownloaderGUI:
     
     def _download_comments(self):
         """Download comments (runs in background thread)"""
+        output_folder = None
         try:
             # Get inputs
             url_or_id = self.url_entry.get().strip()
-            output_file = self.output_entry.get().strip()
-            # Get sort_by from display variable
+            export_folder = self.folder_entry.get().strip()
             sort_display = self.sort_display_var.get()
             sort_by = self.sort_options[sort_display]
             language = self.language_entry.get().strip() or None
             limit_text = self.limit_entry.get().strip()
             limit = int(limit_text) if limit_text else None
-            filter_author = self.filter_author_var.get()
-            html_export = self.html_export_var.get()
+            export_format = self.export_format_var.get()
+            filter_user_display = self.filter_user_var.get()
+            
+            # Determine filter mode
+            filter_mode = None
+            filter_user_id = None
+            filter_user_name = None
+            
+            if filter_user_display == "Video Author":
+                filter_mode = "video_author"
+            elif filter_user_display != "None" and filter_user_display in self.filter_user_map:
+                filter_mode = "database_user"
+                user = self.filter_user_map[filter_user_display]
+                filter_user_id = user['user_id']
+                filter_user_name = user['display_name']
             
             # Determine if input is URL or ID
-            is_url = url_or_id.startswith('http://') or url_or_id.startswith('https://')
+            video_id = self._extract_video_id(url_or_id)
+            if not video_id:
+                raise Exception("Invalid YouTube URL or video ID")
             
-            # Build full URL if needed
-            if is_url:
-                full_url = url_or_id
-            else:
-                full_url = f"https://www.youtube.com/watch?v={url_or_id}"
+            full_url = f"https://www.youtube.com/watch?v={video_id}"
             
-            # Create output directory if needed
-            if os.sep in output_file:
-                outdir = os.path.dirname(output_file)
-                if not os.path.exists(outdir):
-                    os.makedirs(outdir)
-                    self._log_status(f"Created directory: {outdir}")
-            
-            self._log_status(f"Downloading YouTube comments for {url_or_id}...")
+            self._log_status(f"Downloading YouTube comments for video: {video_id}")
             self._log_status(f"Sort: {sort_display}")
             if language:
                 self._log_status(f"Language: {language}")
             if limit:
                 self._log_status(f"Limit: {limit}")
-            if filter_author:
-                self._log_status(f"Filter: Video Author only")
-            if html_export:
-                self._log_status(f"Export format: HTML (dark mode)")
-            else:
-                self._log_status(f"Export format: JSON")
-            self._log_status(f"Output: {output_file}")
+            
+            # Map export format to extension
+            format_map = {
+                "Dark HTML": "html",
+                "TXT": "txt",
+                "JSON": "json"
+            }
+            file_extension = format_map.get(export_format, "html")
+            
+            self._log_status(f"Export format: {export_format}")
             self._log_status("")
             
             # Create downloader
             downloader = YoutubeCommentDownloader()
             
-            # Get video author channel ID if filtering is enabled
-            author_channel_id = None
-            if filter_author:
-                self._log_status("Extracting video author information...")
-                author_channel_id = downloader.get_video_author_channel_id(full_url)
-                if author_channel_id:
-                    self._log_status(f"Video author channel ID: {author_channel_id}")
-                else:
-                    self._log_status("Warning: Could not extract video author channel ID. Filter may not work.")
-                self._log_status("")
+            # Get video metadata
+            self._log_status("Fetching video metadata...")
+            metadata = downloader.get_video_metadata(full_url)
+            
+            if not metadata:
+                raise Exception("Could not extract video metadata")
+            
+            video_title = metadata.get('title', 'Unknown Video')
+            channel_name = metadata.get('channel_name', 'Unknown Creator')
+            channel_id = metadata.get('channel_id', '')
+            
+            self._log_status(f"Video: {video_title}")
+            self._log_status(f"Channel: {channel_name}")
+            
+            # Auto-add video author to database
+            if channel_id and channel_name:
+                self.user_db.add_user(
+                    user_id=channel_id,
+                    username=channel_name,
+                    display_name=channel_name,
+                    channel_url=f"https://www.youtube.com/channel/{channel_id}"
+                )
+                self._log_status(f"Added '{channel_name}' to user database")
+            
+            # Set filter user if filtering by video author
+            if filter_mode == "video_author":
+                filter_user_id = channel_id
+                filter_user_name = channel_name
+            
+            if filter_user_name:
+                self._log_status(f"Filter: {filter_user_name} only")
+            
+            self._log_status("")
             
             # Get comment generator
-            if is_url:
-                generator = downloader.get_comments_from_url(url_or_id, sort_by, language)
-            else:
-                generator = downloader.get_comments(url_or_id, sort_by, language)
+            generator = downloader.get_comments(video_id, sort_by, language)
             
-            # Download comments to list (needed for filtering and HTML export)
+            # Download comments to list
             all_comments = []
             count = 0
             start_time = time.time()
+            
+            # Estimate total if available
+            total_estimate = metadata.get('comment_count_estimate', 0)
             
             self._log_status("Downloading comments...")
             for comment in generator:
@@ -403,57 +565,73 @@ class YouTubeCommentDownloaderGUI:
                 count += 1
                 if limit and count >= limit:
                     break
+                    
+                # Update progress every 10 comments
                 if count % 10 == 0:
-                    self.root.after(0, self._log_status, f"Downloaded {count} comment(s)...")
+                    if total_estimate and not limit:
+                        self.root.after(0, self._update_progress, count, total_estimate)
+                    elif limit:
+                        self.root.after(0, self._update_progress, count, limit)
+                    else:
+                        self.root.after(0, self._log_status, f"Downloaded {count:,} comment(s)...")
             
             if count > 0:
-                self.root.after(0, self._log_status, f"Downloaded {count} comment(s)...")
+                self.root.after(0, self._log_status, f"Downloaded {count:,} comment(s)...")
             
-            # Apply author filter if specified
+            # Apply filter if specified
             filtered_comments = all_comments
-            if filter_author and author_channel_id:
+            is_filtered = False
+            
+            if filter_user_id:
                 self._log_status("")
-                self._log_status("Applying video author filter...")
-                filtered_comments = self._filter_comments_by_author(all_comments, author_channel_id)
+                self._log_status(f"Applying filter for {filter_user_name}...")
+                filtered_comments = self._filter_comments_by_user(all_comments, filter_user_id)
+                is_filtered = True
                 self.root.after(0, self._log_status, 
-                              f"Filtered to {len(filtered_comments)} comment(s) by video author")
+                              f"Filtered to {len(filtered_comments):,} comment(s) by {filter_user_name}")
             
-            # Write output
-            if html_export:
-                # Generate HTML (always dark mode)
-                self._log_status("")
-                self._log_status("Generating HTML output (dark mode)...")
-                filter_label = "Video Author" if filter_author and author_channel_id else None
-                generate_html_output(filtered_comments, output_file, filter_label)
-            else:
-                # Write JSON (raw, not pretty-printed)
-                self._log_status("")
-                self._log_status("Writing JSON output...")
-                fp = None
-                try:
-                    fp = io.open(output_file, 'w', encoding='utf8')
-                    # Write raw JSON array
-                    fp.write('[')
-                    for i, comment in enumerate(filtered_comments):
-                        if i > 0:
-                            fp.write(',')
-                        comment_str = to_json(comment, indent=None)
-                        fp.write(comment_str)
-                    fp.write(']')
-                finally:
-                    if fp:
-                        fp.close()
-            
-            elapsed = time.time() - start_time
-            if len(filtered_comments) > 0:
-                self.root.after(0, self._log_status, "")
-                self.root.after(0, self._log_status, f"[{elapsed:.2f} seconds] Done!")
-                self.root.after(0, self._log_status, f"Total comments in output: {len(filtered_comments)}")
-                self.root.after(0, messagebox.showinfo, "Download Complete", 
-                               f"Successfully saved {len(filtered_comments)} comments to {output_file}")
-            else:
+            if len(filtered_comments) == 0:
                 self.root.after(0, self._log_status, "No comments available!")
                 self.root.after(0, messagebox.showwarning, "No Comments", "No comments were found")
+                return
+            
+            # Create export path using file_utils
+            output_path, output_folder = create_export_path(
+                base_folder=export_folder,
+                creator_name=channel_name,
+                video_title=video_title,
+                export_format=file_extension,
+                is_filtered=is_filtered
+            )
+            
+            self._log_status("")
+            self._log_status(f"Saving to: {output_path}")
+            
+            # Write output based on format
+            if export_format == "Dark HTML":
+                filter_label = filter_user_name if is_filtered else None
+                generate_html_output(filtered_comments, output_path, filter_label)
+            elif export_format == "TXT":
+                filter_label = filter_user_name if is_filtered else None
+                generate_txt_output(filtered_comments, output_path, filter_label)
+            elif export_format == "JSON":
+                filter_label = filter_user_name if is_filtered else None
+                generate_json_output(filtered_comments, output_path, filter_label)
+            
+            elapsed = time.time() - start_time
+            self.root.after(0, self._log_status, "")
+            self.root.after(0, self._log_status, f"[{elapsed:.2f} seconds] Done!")
+            self.root.after(0, self._log_status, f"Total comments in output: {len(filtered_comments):,}")
+            
+            # Save settings
+            self.config.set('last_format', export_format)
+            
+            # Open folder after download
+            if output_folder:
+                self.root.after(0, lambda: open_folder(output_folder))
+            
+            self.root.after(0, messagebox.showinfo, "Download Complete", 
+                           f"Successfully saved {len(filtered_comments):,} comments to:\n{output_path}")
             
         except Exception as e:
             error_msg = f"Error: {str(e)}"
@@ -462,8 +640,9 @@ class YouTubeCommentDownloaderGUI:
             self.root.after(0, messagebox.showerror, "Download Error", error_msg)
         
         finally:
-            # Re-enable download button
+            # Re-enable download button and reset progress
             self.root.after(0, self.download_button.config, {"state": tk.NORMAL})
+            self.root.after(0, self.progress_var.set, 0)
             self.is_downloading = False
     
     def _close_window(self):
