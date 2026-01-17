@@ -29,9 +29,6 @@ def to_json(comment, indent=None):
 
 
 class YouTubeCommentDownloaderGUI:
-    # Constants
-    URL_VALIDATION_DEBOUNCE_MS = 500  # Delay before validating URL
-    URL_VALIDATION_TIMEOUT_SEC = 10   # Timeout for URL validation requests
     
     def __init__(self, root):
         self.root = root
@@ -48,10 +45,6 @@ class YouTubeCommentDownloaderGUI:
         
         self.download_thread = None
         self.is_downloading = False
-        
-        # URL validation
-        self.url_validation_timer = None
-        self.url_validation_thread = None
         
         self._create_widgets()
     
@@ -72,12 +65,6 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="YouTube URL or ID:").grid(row=row, column=0, sticky=tk.W, pady=5)
         self.url_entry = ttk.Entry(main_frame, width=50)
         self.url_entry.grid(row=row, column=1, columnspan=2, sticky=(tk.W, tk.E), pady=5)
-        self.url_entry.bind('<KeyRelease>', self._on_url_changed)
-        row += 1
-        
-        # URL validation status
-        self.url_status_label = ttk.Label(main_frame, text="", foreground="gray")
-        self.url_status_label.grid(row=row, column=1, columnspan=2, sticky=tk.W, pady=(0, 5))
         row += 1
         
         # Sort
@@ -85,9 +72,12 @@ class YouTubeCommentDownloaderGUI:
         self.sort_var = tk.IntVar(value=SORT_BY_RECENT)
         sort_frame = ttk.Frame(main_frame)
         sort_frame.grid(row=row, column=1, columnspan=2, sticky=tk.W, pady=5)
-        ttk.Combobox(sort_frame, textvariable=self.sort_var, values=[SORT_BY_POPULAR, SORT_BY_RECENT], 
+        # Create a mapping between display values and actual values
+        self.sort_options = {"Popular": SORT_BY_POPULAR, "Recent": SORT_BY_RECENT}
+        self.sort_display_var = tk.StringVar(value="Recent")
+        ttk.Combobox(sort_frame, textvariable=self.sort_display_var, 
+                     values=list(self.sort_options.keys()), 
                      state="readonly", width=15).pack(side=tk.LEFT)
-        ttk.Label(sort_frame, text="  (0=Popular, 1=Recent)").pack(side=tk.LEFT)
         row += 1
         
         # Language
@@ -104,30 +94,16 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="(number of comments)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         
-        # Filter by User
-        ttk.Label(main_frame, text="Filter by User (optional):").grid(row=row, column=0, sticky=tk.W, pady=5)
-        self.filter_user_entry = ttk.Entry(main_frame, width=20)
-        self.filter_user_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
-        self.filter_user_entry.insert(0, "")
-        ttk.Label(main_frame, text="(user's display name)").grid(row=row, column=2, sticky=tk.W, pady=5)
+        # Filter by Video Author
+        self.filter_author_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(main_frame, text="Filter by Video Author", 
+                       variable=self.filter_author_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
         row += 1
         
-        # Pretty output
-        self.pretty_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(main_frame, text="Pretty output (indented JSON)", 
-                       variable=self.pretty_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
-        row += 1
-        
-        # HTML export
-        self.html_export_var = tk.BooleanVar(value=False)
+        # HTML export (checked by default)
+        self.html_export_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(main_frame, text="Export as HTML", 
                        variable=self.html_export_var, command=self._on_html_export_toggle).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
-        row += 1
-        
-        # Dark mode HTML
-        self.dark_mode_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(main_frame, text="Dark mode HTML", 
-                       variable=self.dark_mode_var).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
         row += 1
         
         # Output file
@@ -251,117 +227,26 @@ class YouTubeCommentDownloaderGUI:
         
         return None
     
-    def _on_url_changed(self, event=None):
-        """Handle URL entry text change with debouncing"""
-        # Cancel any pending validation
-        if self.url_validation_timer:
-            self.root.after_cancel(self.url_validation_timer)
-        
-        # Schedule new validation after configured delay
-        self.url_validation_timer = self.root.after(
-            self.URL_VALIDATION_DEBOUNCE_MS, self._validate_url
-        )
-    
-    def _validate_url(self):
-        """Validate the URL and check for comments (runs after debounce)"""
-        url_or_id = self.url_entry.get().strip()
-        
-        if not url_or_id:
-            self.url_status_label.config(text="", foreground="gray")
-            return
-        
-        # Show checking status
-        self.url_status_label.config(text="⏳ Checking...", foreground="gray")
-        
-        # Run validation in background thread
-        if self.url_validation_thread and self.url_validation_thread.is_alive():
-            # Skip if already validating
-            return
-        
-        self.url_validation_thread = threading.Thread(
-            target=self._validate_url_background,
-            args=(url_or_id,),
-            daemon=True
-        )
-        self.url_validation_thread.start()
-    
-    def _validate_url_background(self, url_or_id):
-        """Validate URL in background thread"""
-        try:
-            # Extract video ID
-            video_id = self._extract_video_id(url_or_id)
-            
-            if not video_id:
-                self.root.after(0, self.url_status_label.config, 
-                              {"text": "✗ Invalid YouTube URL", "foreground": "red"})
-                return
-            
-            # Try to fetch the page to verify it's valid
-            downloader = YoutubeCommentDownloader()
-            url = f"https://www.youtube.com/watch?v={video_id}"
-            
-            try:
-                response = downloader.session.get(
-                    url, timeout=self.URL_VALIDATION_TIMEOUT_SEC
-                )
-                if response.status_code != 200:
-                    self.root.after(0, self.url_status_label.config,
-                                  {"text": "✗ Video not found", "foreground": "red"})
-                    return
-                
-                # Check if comments are available
-                # Note: This is a heuristic check that may need updates if YouTube changes their HTML
-                html_content = response.text
-                if 'commentsDisabled' in html_content or '"commentCount":0' in html_content:
-                    self.root.after(0, self.url_status_label.config,
-                                  {"text": "✓ Valid URL (comments may be disabled)", "foreground": "orange"})
-                else:
-                    # Try to extract comment count
-                    comment_count_match = re.search(r'"commentCount":"(\d+)"', html_content)
-                    if comment_count_match:
-                        count = int(comment_count_match.group(1))
-                        count_str = f"{count:,}"
-                        self.root.after(0, self.url_status_label.config,
-                                      {"text": f"✓ Valid - ~{count_str} comments", "foreground": "green"})
-                    else:
-                        self.root.after(0, self.url_status_label.config,
-                                      {"text": "✓ Valid YouTube URL", "foreground": "green"})
-            except Exception as e:
-                # Network error or timeout
-                self.root.after(0, self.url_status_label.config,
-                              {"text": "✓ Valid format (couldn't verify)", "foreground": "orange"})
-        
-        except Exception as e:
-            # Any other error
-            self.root.after(0, self.url_status_label.config,
-                          {"text": "✗ Invalid URL", "foreground": "red"})
-    
     def _log_status(self, message):
         """Add message to status text area"""
         self.status_text.insert(tk.END, message + "\n")
         self.status_text.see(tk.END)
         self.status_text.update_idletasks()
     
-    def _filter_comments_by_user(self, all_comments, target_user):
+    def _filter_comments_by_author(self, all_comments, author_channel_id):
         """
-        Filter comments to show only those by the specified user
-        Also include parent comments of user's replies for context
+        Filter comments to show only those by the video author
+        Also include parent comments when the author replied to them
         
         Args:
             all_comments: List of all comment dictionaries
-            target_user: Username to filter (with or without @)
+            author_channel_id: Channel ID of the video author
         
         Returns:
             List of filtered comments
         """
-        if not target_user:
+        if not author_channel_id:
             return all_comments
-        
-        # Normalize target user (remove @ if present)
-        target_user = target_user.strip()
-        if target_user.startswith('@'):
-            target_user = target_user[1:]
-        target_user_lower = target_user.lower()
         
         # Build a map of comment IDs to comments for lookup
         comment_map = {c['cid']: c for c in all_comments}
@@ -370,21 +255,19 @@ class YouTubeCommentDownloaderGUI:
         result_cids = set()
         
         for comment in all_comments:
-            # Check if this comment is by the target user
-            # Note: 'author' contains the display name (e.g., "John Doe")
-            # 'channel' contains the channel ID (e.g., "UC123...") not the handle
-            author = comment.get('author', '').lower()
+            # Check if this comment is by the video author
+            comment_channel = comment.get('channel', '')
             
-            # Match by author display name (case-insensitive)
-            is_target_user = author == target_user_lower
+            # Match by channel ID
+            is_author = comment_channel == author_channel_id
             
-            if is_target_user:
-                # Add the user's comment
+            if is_author:
+                # Add the author's comment
                 if comment['cid'] not in result_cids:
                     result.append(comment)
                     result_cids.add(comment['cid'])
                 
-                # If it's a reply, also include the parent comment
+                # If it's a reply, also include the parent comment for context
                 if comment.get('reply'):
                     parent_cid = comment['cid'].rsplit('.', 1)[0]
                     parent = comment_map.get(parent_cid)
@@ -449,17 +332,23 @@ class YouTubeCommentDownloaderGUI:
             # Get inputs
             url_or_id = self.url_entry.get().strip()
             output_file = self.output_entry.get().strip()
-            sort_by = self.sort_var.get()
+            # Get sort_by from display variable
+            sort_display = self.sort_display_var.get()
+            sort_by = self.sort_options[sort_display]
             language = self.language_entry.get().strip() or None
             limit_text = self.limit_entry.get().strip()
             limit = int(limit_text) if limit_text else None
-            pretty = self.pretty_var.get()
-            filter_user = self.filter_user_entry.get().strip() or None
+            filter_author = self.filter_author_var.get()
             html_export = self.html_export_var.get()
-            dark_mode = self.dark_mode_var.get()
             
             # Determine if input is URL or ID
             is_url = url_or_id.startswith('http://') or url_or_id.startswith('https://')
+            
+            # Build full URL if needed
+            if is_url:
+                full_url = url_or_id
+            else:
+                full_url = f"https://www.youtube.com/watch?v={url_or_id}"
             
             # Create output directory if needed
             if os.sep in output_file:
@@ -469,20 +358,33 @@ class YouTubeCommentDownloaderGUI:
                     self._log_status(f"Created directory: {outdir}")
             
             self._log_status(f"Downloading YouTube comments for {url_or_id}...")
-            self._log_status(f"Sort: {'Popular' if sort_by == SORT_BY_POPULAR else 'Recent'}")
+            self._log_status(f"Sort: {sort_display}")
             if language:
                 self._log_status(f"Language: {language}")
             if limit:
                 self._log_status(f"Limit: {limit}")
-            if filter_user:
-                self._log_status(f"Filter by user: {filter_user}")
+            if filter_author:
+                self._log_status(f"Filter: Video Author only")
             if html_export:
-                self._log_status(f"Export format: HTML")
+                self._log_status(f"Export format: HTML (dark mode)")
+            else:
+                self._log_status(f"Export format: JSON")
             self._log_status(f"Output: {output_file}")
             self._log_status("")
             
             # Create downloader
             downloader = YoutubeCommentDownloader()
+            
+            # Get video author channel ID if filtering is enabled
+            author_channel_id = None
+            if filter_author:
+                self._log_status("Extracting video author information...")
+                author_channel_id = downloader.get_video_author_channel_id(full_url)
+                if author_channel_id:
+                    self._log_status(f"Video author channel ID: {author_channel_id}")
+                else:
+                    self._log_status("Warning: Could not extract video author channel ID. Filter may not work.")
+                self._log_status("")
             
             # Get comment generator
             if is_url:
@@ -507,39 +409,37 @@ class YouTubeCommentDownloaderGUI:
             if count > 0:
                 self.root.after(0, self._log_status, f"Downloaded {count} comment(s)...")
             
-            # Apply user filter if specified
+            # Apply author filter if specified
             filtered_comments = all_comments
-            if filter_user:
+            if filter_author and author_channel_id:
                 self._log_status("")
-                self._log_status("Applying user filter...")
-                filtered_comments = self._filter_comments_by_user(all_comments, filter_user)
+                self._log_status("Applying video author filter...")
+                filtered_comments = self._filter_comments_by_author(all_comments, author_channel_id)
                 self.root.after(0, self._log_status, 
-                              f"Filtered to {len(filtered_comments)} comment(s) by {filter_user}")
+                              f"Filtered to {len(filtered_comments)} comment(s) by video author")
             
             # Write output
             if html_export:
-                # Generate HTML
+                # Generate HTML (always dark mode)
                 self._log_status("")
-                self._log_status("Generating HTML output...")
-                if dark_mode:
-                    self._log_status("Using dark mode theme...")
-                generate_html_output(filtered_comments, output_file, filter_user, dark_mode)
+                self._log_status("Generating HTML output (dark mode)...")
+                filter_label = "Video Author" if filter_author and author_channel_id else None
+                generate_html_output(filtered_comments, output_file, filter_label)
             else:
-                # Write JSON
+                # Write JSON (raw, not pretty-printed)
+                self._log_status("")
+                self._log_status("Writing JSON output...")
                 fp = None
                 try:
                     fp = io.open(output_file, 'w', encoding='utf8')
-                    if pretty:
-                        fp.write('{\n' + ' ' * INDENT + '"comments": [\n')
-                    
+                    # Write raw JSON array
+                    fp.write('[')
                     for i, comment in enumerate(filtered_comments):
-                        comment_str = to_json(comment, indent=INDENT if pretty else None)
-                        if pretty and i < len(filtered_comments) - 1:
-                            comment_str = comment_str + ','
-                        print(comment_str.decode('utf-8') if isinstance(comment_str, bytes) else comment_str, file=fp)
-                    
-                    if pretty:
-                        fp.write(' ' * INDENT + ']\n}')
+                        if i > 0:
+                            fp.write(',')
+                        comment_str = to_json(comment, indent=None)
+                        fp.write(comment_str)
+                    fp.write(']')
                 finally:
                     if fp:
                         fp.close()

@@ -8,7 +8,7 @@ import html
 from datetime import datetime
 
 
-def generate_html_output(comments, output_path, filtered_user=None, dark_mode=False):
+def generate_html_output(comments, output_path, filtered_user=None):
     """
     Generate an HTML file with YouTube-style comment display
     
@@ -16,7 +16,6 @@ def generate_html_output(comments, output_path, filtered_user=None, dark_mode=Fa
         comments: List of comment dictionaries
         output_path: Path to output HTML file
         filtered_user: Username that was filtered (for display in title)
-        dark_mode: Whether to use dark mode theme (default: False)
     """
     # Build comment hierarchy
     comment_map = {c['cid']: c for c in comments}
@@ -36,50 +35,35 @@ def generate_html_output(comments, output_path, filtered_user=None, dark_mode=Fa
             # This is a root comment
             root_comments.append(comment)
     
-    # Generate HTML
-    html_content = _generate_html_template(root_comments, filtered_user, dark_mode)
+    # Generate HTML (always using dark mode)
+    html_content = _generate_html_template(root_comments, filtered_user)
     
     # Write to file
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
 
 
-def _generate_html_template(root_comments, filtered_user=None, dark_mode=False):
-    """Generate the complete HTML document"""
+def _generate_html_template(root_comments, filtered_user=None):
+    """Generate the complete HTML document (always in dark mode)"""
     
     title = "YouTube Comments"
     if filtered_user:
         title += f" - Filtered by {filtered_user}"
     
-    # Define color schemes
-    if dark_mode:
-        colors = {
-            'bg_body': '#0f0f0f',
-            'bg_container': '#212121',
-            'text_primary': '#f1f1f1',
-            'text_secondary': '#aaaaaa',
-            'border': '#3f3f3f',
-            'link': '#3ea6ff',
-            'link_hover': '#3ea6ff',
-            'button_hover_bg': 'rgba(62, 166, 255, 0.1)',
-            'avatar_bg': '#3f3f3f',
-            'avatar_text': '#aaaaaa',
-            'shadow': 'rgba(0,0,0,0.3)',
-        }
-    else:
-        colors = {
-            'bg_body': '#f9f9f9',
-            'bg_container': 'white',
-            'text_primary': '#030303',
-            'text_secondary': '#606060',
-            'border': '#e5e5e5',
-            'link': '#030303',
-            'link_hover': '#065fd4',
-            'button_hover_bg': 'rgba(6, 95, 212, 0.1)',
-            'avatar_bg': '#e5e5e5',
-            'avatar_text': '#606060',
-            'shadow': 'rgba(0,0,0,0.1)',
-        }
+    # Always use dark mode colors
+    colors = {
+        'bg_body': '#0f0f0f',
+        'bg_container': '#212121',
+        'text_primary': '#f1f1f1',
+        'text_secondary': '#aaaaaa',
+        'border': '#3f3f3f',
+        'link': '#3ea6ff',
+        'link_hover': '#3ea6ff',
+        'button_hover_bg': 'rgba(62, 166, 255, 0.1)',
+        'avatar_bg': '#3f3f3f',
+        'avatar_text': '#aaaaaa',
+        'shadow': 'rgba(0,0,0,0.3)',
+    }
     
     header = f"""<!DOCTYPE html>
 <html lang="en">

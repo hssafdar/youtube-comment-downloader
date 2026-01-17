@@ -44,6 +44,46 @@ class YoutubeCommentDownloader:
                 pass
             time.sleep(sleep)
 
+    def get_video_author_channel_id(self, youtube_url):
+        """
+        Extract the video author's channel ID from the page
+        
+        Args:
+            youtube_url: YouTube video URL
+            
+        Returns:
+            Channel ID string, or None if not found
+        """
+        try:
+            response = self.session.get(youtube_url)
+            
+            if 'consent' in str(response.url):
+                params = dict(re.findall(YT_HIDDEN_INPUT_RE, response.text))
+                params.update({'continue': youtube_url, 'set_eom': False, 'set_ytc': True, 'set_apyt': True})
+                response = self.session.post(YOUTUBE_CONSENT_URL, params=params)
+            
+            html = response.text
+            data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default='{}'))
+            
+            # Try to find channel ID in the video owner renderer
+            owner_renderer = next(self.search_dict(data, 'videoOwnerRenderer'), None)
+            if owner_renderer:
+                # Extract channel ID from navigationEndpoint
+                channel_id = owner_renderer.get('navigationEndpoint', {}).get('browseEndpoint', {}).get('browseId')
+                if channel_id:
+                    return channel_id
+            
+            # Fallback: try to find in other locations
+            # Look for channelId in the page
+            channel_match = re.search(r'"channelId":"([^"]+)"', html)
+            if channel_match:
+                return channel_match.group(1)
+                
+        except Exception:
+            pass
+        
+        return None
+
     def get_comments(self, youtube_id, *args, **kwargs):
         return self.get_comments_from_url(YOUTUBE_VIDEO_URL.format(youtube_id=youtube_id), *args, **kwargs)
 
@@ -57,13 +97,13 @@ class YoutubeCommentDownloader:
             response = self.session.post(YOUTUBE_CONSENT_URL, params=params)
 
         html = response.text
-        ytcfg = json.loads(self.regex_search(html, YT_CFG_RE, default=''))
+        ytcfg = json.loads(self.regex_search(html, YT_CFG_RE, default='{}'))
         if not ytcfg:
             return  # Unable to extract configuration
         if language:
             ytcfg['INNERTUBE_CONTEXT']['client']['hl'] = language
 
-        data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default=''))
+        data = json.loads(self.regex_search(html, YT_INITIAL_DATA_RE, default='{}'))
 
         item_section = next(self.search_dict(data, 'itemSectionRenderer'), None)
         renderer = next(self.search_dict(item_section, 'continuationItemRenderer'), None) if item_section else None
