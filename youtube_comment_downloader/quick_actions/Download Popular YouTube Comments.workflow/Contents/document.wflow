@@ -63,7 +63,7 @@
 do
     cd ~/Downloads
     timestamp=$(date +"%Y%m%d_%H%M%S")
-    python3 /Users/yakubianspy/Desktop/Comments/bak/youtube-comment-downloader/youtube_comment_downloader/__main__.py -u "$f" -s 0 -o "popular_comments_${timestamp}.json"
+    python3 -m youtube_comment_downloader -u "$f" -s 0 -l 250 -o "popular_comments_${timestamp}.json"
 done</string>
 					<key>CheckedForUserDefaultShell</key>
 					<true/>
