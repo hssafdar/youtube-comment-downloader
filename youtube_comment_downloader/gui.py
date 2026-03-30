@@ -85,6 +85,7 @@ class YouTubeCommentDownloaderGUI:
         ttk.Label(main_frame, text="Limit (optional):").grid(row=row, column=0, sticky=tk.W, pady=5)
         self.limit_entry = ttk.Entry(main_frame, width=20)
         self.limit_entry.grid(row=row, column=1, sticky=tk.W, pady=5)
+        self.limit_entry.insert(0, "250")
         ttk.Label(main_frame, text="(number of comments)").grid(row=row, column=2, sticky=tk.W, pady=5)
         row += 1
         

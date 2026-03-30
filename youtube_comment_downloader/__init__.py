@@ -25,7 +25,7 @@ def main(argv = None):
     parser.add_argument('--url', '-u', help='Youtube URL for which to download the comments')
     parser.add_argument('--output', '-o', help='Output filename (output format is line delimited JSON)')
     parser.add_argument('--pretty', '-p', action='store_true', help='Change the output format to indented JSON')
-    parser.add_argument('--limit', '-l', type=int, help='Limit the number of comments')
+    parser.add_argument('--limit', '-l', type=int, default=250, help='Limit the number of comments')
     parser.add_argument('--language', '-a', type=str, default=None, help='Language for Youtube generated text (e.g. en)')
     parser.add_argument('--sort', '-s', type=int, default=SORT_BY_RECENT,
                         help='Whether to download popular (0) or recent comments (1). Defaults to 1')
